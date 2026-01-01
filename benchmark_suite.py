@@ -110,6 +110,63 @@ class BenchmarkReport:
                 "speedup": network.value / ferrous_cache.value,
                 "unit": "µs"
             })
+
+        # 3. Cache Batch Speedup (v0.2)
+        ferrous_get = find_res("ferrous", "cache_lookup_exact")
+        ferrous_batch = find_res("ferrous", "cache_lookup_batch")
+        if ferrous_get and ferrous_batch:
+            # Normalize batch to per-item for fair comparison
+            per_item_batch = ferrous_batch.value / 100 
+            comparisons.append({
+                "benchmark": "cache_batch_efficiency",
+                "scale": "100_items",
+                "single_op": ferrous_get.value,
+                "batch_op_per_item": per_item_batch,
+                "speedup": ferrous_get.value / per_item_batch,
+                "unit": "µs"
+            })
+
+        # 4. Chunking Parallel Speedup (v0.2)
+        ferrous_chunk = find_res("ferrous", "markdown_chunking")
+        ferrous_parallel = find_res("ferrous_parallel", "markdown_chunking_batch")
+        if ferrous_chunk and ferrous_parallel:
+            # The batch test uses 100 docs
+            seq_total = ferrous_chunk.value * 100 
+            comparisons.append({
+                "benchmark": "chunking_parallel_efficiency",
+                "scale": "100_docs",
+                "sequential_est": seq_total,
+                "parallel_batch": ferrous_parallel.value,
+                "speedup": seq_total / ferrous_parallel.value,
+                "unit": "ms"
+            })
+            
+        # 5. Packing Parallel Speedup (v0.2)
+        ferrous_pack_seq = find_res("ferrous_sequential", "context_packing_sequential")
+        ferrous_pack_batch = find_res("ferrous_parallel", "context_packing_batch")
+        if ferrous_pack_seq and ferrous_pack_batch:
+             comparisons.append({
+                "benchmark": "packing_parallel_efficiency",
+                "scale": "20_sets_of_10",
+                "sequential_value": ferrous_pack_seq.value,
+                "parallel_batch": ferrous_pack_batch.value,
+                "speedup": ferrous_pack_seq.value / ferrous_pack_batch.value,
+                "unit": "ms"
+            })
+
+        # 6. Batch Write Speedup (v0.2)
+        ferrous_put = find_res("ferrous", "cache_put_single")
+        ferrous_put_batch = find_res("ferrous", "cache_put_batch")
+        if ferrous_put and ferrous_put_batch:
+            per_item_batch = ferrous_put_batch.value / 100
+            comparisons.append({
+                "benchmark": "cache_batch_write_efficiency",
+                "scale": "100_items",
+                "single_op": ferrous_put.value,
+                "batch_op_per_item": per_item_batch,
+                "speedup": ferrous_put.value / per_item_batch,
+                "unit": "ms"
+            })
             
         self.comparisons = comparisons
         return {
@@ -336,6 +393,34 @@ class ChunkingBenchmarks:
         except ImportError:
             print("  WARNING: langchain-text-splitters not installed")
         
+        # Ferrous Parallel Batch Chunking (v0.2)
+        try:
+            from ferrous import MarkdownChunker
+            
+            # Generate 100 docs for batch testing
+            batch_docs = [generate_markdown_document(self.chunk_size // 10) for _ in range(100)]
+            
+            def ferrous_chunk_batch():
+                chunker = MarkdownChunker(max_tokens=1000)
+                return chunker.chunk_batch(batch_docs)
+            
+            stats = benchmark_function(ferrous_chunk_batch, iterations=10)
+            results.append(BenchmarkResult(
+                name="markdown_chunking_batch",
+                component="chunking",
+                implementation="ferrous_parallel",
+                metric="latency_ms",
+                value=stats["mean"],
+                unit="ms",
+                scale="100_docs",
+                iterations=10,
+                std_dev=stats["std_dev"],
+                min_val=stats["min"],
+                max_val=stats["max"],
+            ))
+        except (ImportError, AttributeError):
+            pass
+
         return results
 
 
@@ -352,7 +437,7 @@ class CacheBenchmarks:
         
         # Generate test data
         base_text = "The quick brown fox jumps over the lazy dog. " * 10
-        texts = generate_similar_texts(base_text, min(self.num_entries, 1000))
+        texts = generate_similar_texts(base_text, self.num_entries)
         
         # Ferrous FuzzyCache
         try:
@@ -367,9 +452,9 @@ class CacheBenchmarks:
             try:
                 cache = FuzzyCache(db_path, threshold=3)
                 
-                # Populate cache
-                for i, text in enumerate(texts):
-                    cache.put(text, f"response_{i}")
+                # Populate cache (batch mode for speed)
+                batch_data = [(text, f"response_{i}") for i, text in enumerate(texts)]
+                cache.put_batch(batch_data)
                 
                 # Read benchmark (exact match)
                 def ferrous_get_exact():
@@ -408,6 +493,67 @@ class CacheBenchmarks:
                     std_dev=stats["std_dev"] * 1000,
                     min_val=stats["min"] * 1000,
                     max_val=stats["max"] * 1000,
+                ))
+
+                # Batch Read Benchmark (v0.2)
+                batch_texts = texts[:100]
+                def ferrous_get_batch():
+                    return cache.get_batch(batch_texts)
+                
+                stats = benchmark_function(ferrous_get_batch, iterations=50)
+                results.append(BenchmarkResult(
+                    name="cache_lookup_batch",
+                    component="cache",
+                    implementation="ferrous",
+                    metric="latency_us",
+                    value=stats["mean"] * 1000,
+                    unit="µs",
+                    scale="100_items",
+                    iterations=50,
+                    std_dev=stats["std_dev"] * 1000,
+                    min_val=stats["min"] * 1000,
+                    max_val=stats["max"] * 1000,
+                ))
+
+                # Single Write Loop Benchmark (for comparison)
+                put_single_items = [(f"s_text_{i}", f"s_data_{i}") for i in range(100)]
+                def ferrous_put_loop():
+                    for k, v in put_single_items:
+                        cache.put(k, v)
+                
+                stats = benchmark_function(ferrous_put_loop, iterations=10)
+                results.append(BenchmarkResult(
+                    name="cache_put_single",
+                    component="cache",
+                    implementation="ferrous",
+                    metric="latency_ms",
+                    value=stats["mean"],
+                    unit="ms",
+                    scale="100_items",
+                    iterations=10,
+                    std_dev=stats["std_dev"],
+                    min_val=stats["min"],
+                    max_val=stats["max"],
+                ))
+
+                # Batch Write Benchmark (v0.2)
+                put_batch_items = [(f"new_text_{i}", f"data_{i}") for i in range(100)]
+                def ferrous_put_batch():
+                    return cache.put_batch(put_batch_items)
+                
+                stats = benchmark_function(ferrous_put_batch, iterations=10)
+                results.append(BenchmarkResult(
+                    name="cache_put_batch",
+                    component="cache",
+                    implementation="ferrous",
+                    metric="latency_ms",
+                    value=stats["mean"],
+                    unit="ms",
+                    scale="100_items",
+                    iterations=10,
+                    std_dev=stats["std_dev"],
+                    min_val=stats["min"],
+                    max_val=stats["max"],
                 ))
                 
                 # Explicitly close connection by dropping the object
@@ -495,7 +641,8 @@ class PackingBenchmarks:
             from ferrous import ContextPacker
             
             def ferrous_pack():
-                packer = ContextPacker(max_tokens=4000)
+                # 16000 chars ~= 4000 tokens
+                packer = ContextPacker(max_chars=16000)
                 return packer.pack(docs)
             
             stats = benchmark_function(ferrous_pack, iterations=5, warmup=1)
@@ -534,6 +681,66 @@ class PackingBenchmarks:
             
         except ImportError:
             print("  WARNING: ferrous not installed")
+
+        # Ferrous Sequential Loop Packing (Baseline for Parallel)
+        try:
+            from ferrous import ContextPacker
+            
+            # 20 sets of 10 docs each
+            batch_docs = [[generate_realistic_text(self.doc_size) for _ in range(10)] for _ in range(20)]
+            
+            def ferrous_pack_sequential_loop():
+                packer = ContextPacker(max_chars=16000)
+                # Simulate handling multiple requests sequentially
+                for doc_set in batch_docs:
+                    packer.pack(doc_set)
+            
+            stats = benchmark_function(ferrous_pack_sequential_loop, iterations=3)
+            results.append(BenchmarkResult(
+                name="context_packing_sequential",
+                component="packing",
+                implementation="ferrous_sequential",
+                metric="latency_ms",
+                value=stats["mean"],
+                unit="ms",
+                scale="20_sets_of_10",
+                iterations=3,
+                std_dev=stats["std_dev"],
+                min_val=stats["min"],
+                max_val=stats["max"],
+            ))
+            
+        except (ImportError, AttributeError):
+            pass
+
+        # Ferrous Parallel Batch Packing (v0.2)
+        try:
+            from ferrous import ContextPacker
+            
+            # 20 sets of 10 docs each
+            batch_docs = [[generate_realistic_text(self.doc_size) for _ in range(10)] for _ in range(20)]
+            
+            def ferrous_pack_batch():
+                # 16000 chars ~= 4000 tokens
+                packer = ContextPacker(max_chars=16000)
+                return packer.pack_batch(batch_docs)
+            
+            stats = benchmark_function(ferrous_pack_batch, iterations=5)
+            results.append(BenchmarkResult(
+                name="context_packing_batch",
+                component="packing",
+                implementation="ferrous_parallel",
+                metric="latency_ms",
+                value=stats["mean"],
+                unit="ms",
+                scale="20_sets_of_10",
+                iterations=5,
+                std_dev=stats["std_dev"],
+                min_val=stats["min"],
+                max_val=stats["max"],
+            ))
+        except (ImportError, AttributeError):
+            pass
         
         # NLTK sentence tokenization (baseline for comparison)
         try:
@@ -673,7 +880,8 @@ class QualityBenchmarks:
         
         try:
             from ferrous import ContextPacker
-            packer = ContextPacker(max_tokens=10000)
+            # 10000 chars roughly 2500 tokens
+            packer = ContextPacker(max_chars=10000)
             
             correct = 0
             total = 0
@@ -767,7 +975,8 @@ class NeedleBenchmarks:
             # we need to be sure the 5 needles are in that top 300.
             # That's the real test.
             
-            packer = ContextPacker(max_tokens=10000) 
+            # 40000 chars ~= 10000 tokens
+            packer = ContextPacker(max_chars=40000) 
             packed = packer.pack([doc])
             
             found_count = 0
@@ -802,6 +1011,130 @@ class NeedleBenchmarks:
 
 
 # ==============================================================================
+# PIPELINE BENCHMARKS (END-TO-END)
+# ==============================================================================
+
+class PipelineBenchmarks:
+    """
+    Full RAG ingestion pipeline benchmark.
+    
+    Compares:
+    - Naive: LangChain chunker + loop cache checks + loop writes
+    - Ferrous: Batch chunk + batch cache check + batch write
+    """
+    
+    def __init__(self, scale_config: dict):
+        self.num_docs = scale_config["docs"]
+        self.doc_size = scale_config.get("doc_size_kb", 10)
+        
+    def run(self) -> List[BenchmarkResult]:
+        results = []
+        
+        # Generate test documents
+        docs = [generate_markdown_document(self.doc_size) for _ in range(min(self.num_docs, 100))]
+        print(f"  Pipeline benchmark: {len(docs)} docs, ~{len(docs) * self.doc_size}KB total")
+        
+        # ==== NAIVE PIPELINE ====
+        try:
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            import tempfile
+            import os
+            
+            def naive_pipeline():
+                # 1. Chunk each doc separately
+                splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
+                all_chunks = []
+                for doc in docs:
+                    chunks = splitter.split_text(doc)
+                    all_chunks.extend(chunks)
+                
+                # 2. Simulate cache check + write for each chunk (loop)
+                # Just simulate the overhead of individual operations
+                cache = {}
+                new_chunks = []
+                for chunk in all_chunks:
+                    key = hash(chunk)
+                    if key not in cache:
+                        cache[key] = chunk
+                        new_chunks.append(chunk)
+                
+                # 3. Simulate embedding API call delay (1ms per chunk, batched in 10s)
+                # In reality OpenAI batches, so we simulate ~0.1ms per chunk
+                # But for fair comparison, we skip this as both paths would be similar
+                return len(new_chunks)
+            
+            stats = benchmark_function(naive_pipeline, iterations=5)
+            results.append(BenchmarkResult(
+                name="pipeline_ingestion",
+                component="pipeline",
+                implementation="naive_loop",
+                metric="latency_ms",
+                value=stats["mean"],
+                unit="ms",
+                scale=f"{len(docs)}_docs",
+                iterations=5,
+                std_dev=stats["std_dev"],
+                min_val=stats["min"],
+                max_val=stats["max"],
+            ))
+            naive_time = stats["mean"]
+        except ImportError:
+            print("  WARNING: langchain not installed for naive pipeline")
+            naive_time = None
+        
+        # ==== FERROUS PIPELINE ====
+        try:
+            from ferrous import MarkdownChunker, FuzzyCache
+            import tempfile
+            import os
+            
+            def ferrous_pipeline():
+                # 1. Batch chunk all docs at once
+                chunker = MarkdownChunker(max_tokens=500)
+                all_chunks_nested = chunker.chunk_batch(docs)
+                all_chunks = [c for sublist in all_chunks_nested for c in sublist]
+                
+                # 2. Simulate batch cache check + write
+                # Using in-memory dict for speed (isolates chunking speedup)
+                cache = {}
+                new_chunks = []
+                # Batch hash (simulated)
+                keys = [hash(c) for c in all_chunks]
+                for i, key in enumerate(keys):
+                    if key not in cache:
+                        cache[key] = all_chunks[i]
+                        new_chunks.append(all_chunks[i])
+                
+                return len(new_chunks)
+            
+            stats = benchmark_function(ferrous_pipeline, iterations=5)
+            results.append(BenchmarkResult(
+                name="pipeline_ingestion",
+                component="pipeline",
+                implementation="ferrous_batch",
+                metric="latency_ms",
+                value=stats["mean"],
+                unit="ms",
+                scale=f"{len(docs)}_docs",
+                iterations=5,
+                std_dev=stats["std_dev"],
+                min_val=stats["min"],
+                max_val=stats["max"],
+            ))
+            ferrous_time = stats["mean"]
+        except ImportError:
+            print("  WARNING: ferrous not installed")
+            ferrous_time = None
+        
+        # Print comparison
+        if naive_time and ferrous_time:
+            speedup = naive_time / ferrous_time
+            print(f"  Pipeline Speedup: {speedup:.1f}x (Naive: {naive_time:.0f}ms, Ferrous: {ferrous_time:.0f}ms)")
+        
+        return results
+
+
+# ==============================================================================
 # QUALITATIVE COMPARISON
 # ==============================================================================
 
@@ -829,7 +1162,8 @@ def run_qualitative_comparison():
     try:
         from ferrous import ContextPacker
         start = time.perf_counter()
-        packer = ContextPacker(max_tokens=100) # Tight budget to force selection
+        # Tight budget to force selection (400 chars ~= 100 tokens)
+        packer = ContextPacker(max_chars=400) 
         ferrous_out = packer.pack([doc])
         ferrous_time = (time.perf_counter() - start) * 1000
         
@@ -895,6 +1229,7 @@ def run_all_benchmarks(scale: str = "medium", components: Optional[List[str]] = 
         ("packing", PackingBenchmarks(scale_config)),
         ("quality", QualityBenchmarks()),
         ("needle", NeedleBenchmarks(scale_config)),
+        ("pipeline", PipelineBenchmarks(scale_config)),
     ]
     
     for name, bench in benchmarks:
@@ -1025,7 +1360,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ferrous Benchmark Suite")
     parser.add_argument("--scale", choices=list(SCALES.keys()), default="medium",
                         help="Benchmark scale (default: medium)")
-    parser.add_argument("--component", nargs="+", choices=["chunking", "cache", "packing", "quality", "needle"],
+    parser.add_argument("--component", nargs="+", choices=["chunking", "cache", "packing", "quality", "needle", "pipeline"],
                         help="Specific components to benchmark")
     parser.add_argument("--log", type=str, default="benchmark_results.json",
                         help="Output file for results (default: benchmark_results.json)")

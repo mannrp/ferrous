@@ -7,6 +7,7 @@ use murmurhash3::murmurhash3_x64_128;
 /// 2. Hash each shingle into a 64-bit integer.
 /// 3. For each hash, iterate over its 64 bits. If bit `i` is 1, increment weight `v[i]`. If 0, decrement `v[i]`.
 /// 4. The final fingerprint bit `i` is 1 if `v[i]` > 0, else 0.
+#[derive(Clone)]
 pub struct SimHash {
     shingle_size: usize,
 }

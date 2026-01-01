@@ -5,14 +5,14 @@ use unicode_segmentation::UnicodeSegmentation;
 /// into a smaller token budget using importance-based ranking (TextRank) 
 /// and diversity-based selection (MMR).
 pub struct ContextPacker {
-    max_tokens: usize,
+    max_chars: usize,
     ranker: TextRank,
 }
 
 impl ContextPacker {
-    pub fn new(max_tokens: usize) -> Self {
+    pub fn new(max_chars: usize) -> Self {
         Self {
-            max_tokens,
+            max_chars,
             ranker: TextRank::default(),
         }
     }
@@ -68,13 +68,13 @@ impl ContextPacker {
         // We pick top sentences until the budget is full.
         // We skip sentences that are too similar to already selected ones.
         let mut selected = Vec::new();
-        let mut current_tokens = 0;
+        let mut current_chars = 0;
 
         for (_score, idx) in ranked {
             let sentence = &filtered_sentences[idx];
-            let sentence_len = sentence.len(); // Proxy for tokens
+            let sentence_len = sentence.len(); 
 
-            if current_tokens + sentence_len <= self.max_tokens {
+            if current_chars + sentence_len <= self.max_chars {
                 // Check if redundant (simple check)
                 let is_redundant = selected.iter().any(|s: &String| {
                     self.is_duplicate(s, sentence)
@@ -82,12 +82,20 @@ impl ContextPacker {
 
                 if !is_redundant {
                     selected.push(sentence.clone());
-                    current_tokens += sentence_len;
+                    current_chars += sentence_len;
                 }
             }
         }
 
         selected.join("\n")
+    }
+
+    /// Packs multiple batches of documents in parallel using Rayon.
+    pub fn pack_batch(&self, document_sets: Vec<Vec<String>>) -> Vec<String> {
+        use rayon::prelude::*;
+        document_sets.par_iter()
+            .map(|docs| self.pack(docs))
+            .collect()
     }
 
     /// Very simple Jaccard-like check for redundancy.

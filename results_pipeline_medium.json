@@ -1,0 +1,38 @@
+[
+  {
+    "timestamp": "2025-12-31T23:25:48.660443",
+    "platform": "Windows 10",
+    "python_version": "3.11.9",
+    "ferrous_version": "unknown",
+    "scale": "medium",
+    "results": [
+      {
+        "name": "pipeline_ingestion",
+        "component": "pipeline",
+        "implementation": "naive_loop",
+        "metric": "latency_ms",
+        "value": 7.172239990904927,
+        "unit": "ms",
+        "scale": "50_docs",
+        "iterations": 5,
+        "std_dev": 0.3908455172435314,
+        "min_val": 6.9206999614834785,
+        "max_val": 7.855899981223047
+      },
+      {
+        "name": "pipeline_ingestion",
+        "component": "pipeline",
+        "implementation": "ferrous_batch",
+        "metric": "latency_ms",
+        "value": 1.5534999780356884,
+        "unit": "ms",
+        "scale": "50_docs",
+        "iterations": 5,
+        "std_dev": 0.26751072851803626,
+        "min_val": 1.2639999622479081,
+        "max_val": 1.853400026448071
+      }
+    ],
+    "comparisons": []
+  }
+]

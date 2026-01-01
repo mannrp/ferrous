@@ -1,0 +1,200 @@
+[
+  {
+    "timestamp": "2025-12-31T22:29:27.982577",
+    "platform": "Windows 10",
+    "python_version": "3.11.9",
+    "ferrous_version": "unknown",
+    "scale": "medium",
+    "results": [
+      {
+        "name": "markdown_chunking",
+        "component": "chunking",
+        "implementation": "ferrous",
+        "metric": "latency_ms",
+        "value": 1.0323799855541438,
+        "unit": "ms",
+        "scale": "200KB",
+        "iterations": 20,
+        "std_dev": 0.1530135967634852,
+        "min_val": 0.9394000517204404,
+        "max_val": 1.5377999516204
+      },
+      {
+        "name": "markdown_chunking",
+        "component": "chunking",
+        "implementation": "langchain_recursive",
+        "metric": "latency_ms",
+        "value": 2.7012300211936235,
+        "unit": "ms",
+        "scale": "200KB",
+        "iterations": 10,
+        "std_dev": 0.143011613740954,
+        "min_val": 2.5129999266937375,
+        "max_val": 2.9459999641403556
+      },
+      {
+        "name": "markdown_chunking",
+        "component": "chunking",
+        "implementation": "langchain_markdown",
+        "metric": "latency_ms",
+        "value": 0.792370003182441,
+        "unit": "ms",
+        "scale": "200KB",
+        "iterations": 10,
+        "std_dev": 0.030680963997292997,
+        "min_val": 0.7402000483125448,
+        "max_val": 0.8274000138044357
+      },
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 110.58900039643049,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 100,
+        "std_dev": 23.095167884124315,
+        "min_val": 97.90004696696997,
+        "max_val": 250.70004630833864
+      },
+      {
+        "name": "cache_lookup_fuzzy",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 196.43000792711973,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 50,
+        "std_dev": 106.3827564376372,
+        "min_val": 148.40008225291967,
+        "max_val": 654.0999747812748
+      },
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "network_api_call",
+        "metric": "latency_us",
+        "value": 50343.190028797835,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 10,
+        "std_dev": 182.4475736569511,
+        "min_val": 50116.70000385493,
+        "max_val": 50667.80000925064
+      },
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "python_dict",
+        "metric": "latency_us",
+        "value": 0.23200036957859993,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 1000,
+        "std_dev": 0.05476413993048159,
+        "min_val": 0.19988510757684708,
+        "max_val": 1.00000761449337
+      },
+      {
+        "name": "context_packing",
+        "component": "packing",
+        "implementation": "ferrous",
+        "metric": "latency_ms",
+        "value": 163.00150000024587,
+        "unit": "ms",
+        "scale": "50 docs",
+        "iterations": 5,
+        "std_dev": 1.678985838368601,
+        "min_val": 161.00700001697987,
+        "max_val": 164.40040001180023
+      },
+      {
+        "name": "context_packing_compression",
+        "component": "packing",
+        "implementation": "ferrous",
+        "metric": "compression_ratio",
+        "value": 1096.3597430406853,
+        "unit": "x",
+        "scale": "50 docs",
+        "iterations": 1,
+        "std_dev": 0,
+        "min_val": 1096.3597430406853,
+        "max_val": 1096.3597430406853
+      },
+      {
+        "name": "sentence_tokenization",
+        "component": "packing",
+        "implementation": "nltk",
+        "metric": "latency_ms",
+        "value": 259.64462000411004,
+        "unit": "ms",
+        "scale": "50 docs",
+        "iterations": 5,
+        "std_dev": 0.3211475675675141,
+        "min_val": 259.31609992403537,
+        "max_val": 260.0871999748051
+      },
+      {
+        "name": "context_packing_full_pipeline",
+        "component": "packing",
+        "implementation": "python_textrank",
+        "metric": "latency_ms",
+        "value": 795.7945000380278,
+        "unit": "ms",
+        "scale": "50 docs",
+        "iterations": 1,
+        "std_dev": 0,
+        "min_val": 795.7945000380278,
+        "max_val": 795.7945000380278
+      },
+      {
+        "name": "segmentation_quality",
+        "component": "quality",
+        "implementation": "ferrous",
+        "metric": "accuracy",
+        "value": 1.0,
+        "unit": "ratio",
+        "scale": "unit_tests",
+        "iterations": 4,
+        "std_dev": 0,
+        "min_val": 1.0,
+        "max_val": 1.0
+      },
+      {
+        "name": "needle_recall",
+        "component": "quality",
+        "implementation": "ferrous_tfidf",
+        "metric": "recall",
+        "value": 1.0,
+        "unit": "ratio",
+        "scale": "5000_sentences",
+        "iterations": 1,
+        "std_dev": 0,
+        "min_val": 1.0,
+        "max_val": 1.0
+      }
+    ],
+    "comparisons": [
+      {
+        "benchmark": "markdown_chunking",
+        "scale": "200KB",
+        "ferrous": 1.0323799855541438,
+        "alternative": "langchain_recursive",
+        "alternative_value": 2.7012300211936235,
+        "speedup": 2.6165075446941195,
+        "unit": "ms"
+      },
+      {
+        "benchmark": "cache_roi",
+        "scale": "1000 entries",
+        "ferrous": 110.58900039643049,
+        "alternative": "network_api_call",
+        "alternative_value": 50343.190028797835,
+        "speedup": 455.22782418081044,
+        "unit": "\u00b5s"
+      }
+    ]
+  }
+]

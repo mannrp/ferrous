@@ -29,4 +29,9 @@ impl PyMarkdownChunker {
     pub fn chunk(&self, py: Python<'_>, md: String) -> Vec<String> {
         py.allow_threads(|| self.inner.chunk(&md))
     }
+
+    /// Chunks multiple documents in parallel.
+    pub fn chunk_batch(&self, py: Python<'_>, docs: Vec<String>) -> Vec<Vec<String>> {
+        py.allow_threads(|| self.inner.chunk_batch(docs))
+    }
 }

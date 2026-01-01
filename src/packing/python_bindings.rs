@@ -15,11 +15,11 @@ impl PyContextPacker {
     /// Create a new ContextPacker.
     /// 
     /// Args:
-    ///     max_tokens (int): Maximum total length of the packed context.
+    ///     max_chars (int): Maximum total length (in chars) of the packed context.
     #[new]
-    pub fn new(max_tokens: usize) -> Self {
+    pub fn new(max_chars: usize) -> Self {
         Self {
-            inner: ContextPacker::new(max_tokens),
+            inner: ContextPacker::new(max_chars),
         }
     }
 
@@ -34,5 +34,10 @@ impl PyContextPacker {
     ///     str: The packed and ranked context.
     pub fn pack(&self, py: Python<'_>, documents: Vec<String>) -> String {
         py.allow_threads(|| self.inner.pack(&documents))
+    }
+
+    /// Packs multiple batches of documents in parallel.
+    pub fn pack_batch(&self, py: Python<'_>, document_sets: Vec<Vec<String>>) -> Vec<String> {
+        py.allow_threads(|| self.inner.pack_batch(document_sets))
     }
 }

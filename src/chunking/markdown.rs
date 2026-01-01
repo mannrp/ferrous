@@ -72,6 +72,14 @@ impl MarkdownChunker {
 
         chunks
     }
+
+    /// Chunks multiple documents in parallel using Rayon.
+    pub fn chunk_batch(&self, docs: Vec<String>) -> Vec<Vec<String>> {
+        use rayon::prelude::*;
+        docs.par_iter()
+            .map(|doc| self.chunk(doc))
+            .collect()
+    }
 }
 
 #[cfg(test)]
