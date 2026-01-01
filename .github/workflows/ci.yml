@@ -21,6 +21,8 @@ jobs:
         run: cargo test
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
@@ -41,6 +43,8 @@ jobs:
           python-version: '3.10'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         with:
           args: --release --out dist --find-interpreter
           sccache: 'true'
@@ -62,6 +66,8 @@ jobs:
           python-version: '3.10'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: 1
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
