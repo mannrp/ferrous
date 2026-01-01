@@ -94,6 +94,7 @@ mod tests {
         ];
 
         let scores = TfidfScorer::score_sentences(&sentences);
+        println!("SCORES: {:?}", scores);
         
         // The sentences with "fox" and "jumps" should score highest
         // Sentence 1 ("The the...") has no valid tokens (>2 chars), so score 0
@@ -101,12 +102,19 @@ mod tests {
         // Sort explicitly by score to verify
         let mut sorted = scores.clone();
         sorted.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        println!("SORTED: {:?}", sorted);
 
-        assert_eq!(sorted[0].1, 3); // "fox jumps again" (more terms = higher score likely)
-        assert_eq!(sorted[1].1, 0); // "fox jumps"
+        // Sentence 2 ("Another generic sentence") is all unique, rare words. It scores highest.
+        // Sentence 3 ("...agains") has "again" (rare) plus "fox" (semi-rare).
+        // Sentence 0 ("...jumps") is a subset of 3, so lower score.
+        // Sentence 1 ("The...") is all stop words/common words. Score 0.
         
-        // Locate the garbage sentence
-        let garbage_score = scores[1].0;
-        assert_eq!(garbage_score, 0.0);
+        println!("ORDER: {:?}", sorted.iter().map(|s| s.1).collect::<Vec<_>>());
+
+        // We expect: [2, 3, 0, 1]
+        assert_eq!(sorted[0].1, 2, "index 2 (Another...) should be #1");
+        assert_eq!(sorted[1].1, 3, "index 3 (again) should be #2"); 
+        assert_eq!(sorted[2].1, 0, "index 0 (base) should be #3");
+        assert_eq!(sorted[3].1, 1, "index 1 (garbage) should be #4");
     }
 }
