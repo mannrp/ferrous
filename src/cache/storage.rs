@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection, Result};
+use rustc_hash::FxHashMap;
 use std::path::Path;
 
 /// Storage backend for the Fuzzy Cache using SQLite.
@@ -85,8 +86,9 @@ impl SQLiteStorage {
             .map(|f| f as &dyn rusqlite::ToSql)
             .collect();
 
-        // 3. Execute and build map
-        let mut found_map = std::collections::HashMap::new();
+        // 3. Execute and build map (FxHashMap is faster for integer keys)
+        let mut found_map: FxHashMap<u64, String> = FxHashMap::default();
+        found_map.reserve(fingerprints.len());
         
         // Use query_map to iterate rows
         let rows = stmt.query_map(&*params, |row| {

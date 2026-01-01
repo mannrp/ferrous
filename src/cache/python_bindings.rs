@@ -56,10 +56,13 @@ impl FuzzyCache {
     pub fn get_batch(&self, texts: Vec<String>) -> PyResult<Vec<Option<String>>> {
         use rayon::prelude::*;
         
+        // Sequential for small batches (Rayon overhead not worth it)
         let hasher = self.hasher.clone();
-        let fingerprints: Vec<u64> = texts.par_iter()
-            .map(|text| hasher.fingerprint(text))
-            .collect();
+        let fingerprints: Vec<u64> = if texts.len() < 500 {
+            texts.iter().map(|t| hasher.fingerprint(t)).collect()
+        } else {
+            texts.par_iter().map(|t| hasher.fingerprint(t)).collect()
+        };
 
         // 1. Try exact batch match (O(1) query)
         let mut results = self.storage.get_exact_batch(&fingerprints)
@@ -101,13 +104,23 @@ impl FuzzyCache {
     pub fn put_batch(&mut self, items: Vec<(String, String)>) -> PyResult<()> {
         use rayon::prelude::*;
         
+        // Sequential for small batches (Rayon overhead not worth it)
         let hasher = self.hasher.clone();
-        let batch_items: Vec<(u64, String, String)> = items.into_par_iter()
-            .map(|(text, data)| {
-                let fp = hasher.fingerprint(&text);
-                (fp, text, data)
-            })
-            .collect();
+        let batch_items: Vec<(u64, String, String)> = if items.len() < 500 {
+            items.into_iter()
+                .map(|(text, data)| {
+                    let fp = hasher.fingerprint(&text);
+                    (fp, text, data)
+                })
+                .collect()
+        } else {
+            items.into_par_iter()
+                .map(|(text, data)| {
+                    let fp = hasher.fingerprint(&text);
+                    (fp, text, data)
+                })
+                .collect()
+        };
 
         self.storage.put_batch(batch_items)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;

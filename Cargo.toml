@@ -31,6 +31,7 @@ murmurhash3 = "0.0.5"
 
 # Unicode-compliant text segmentation (UAX #29)
 unicode-segmentation = "1.12"
+rustc-hash = "2.1.1"
 
 [dev-dependencies]
 # For benchmarking
