@@ -267,7 +267,7 @@ def generate_similar_texts(base: str, count: int, variation: float = 0.1) -> Lis
     for i in range(count - 1):
         # Replace some words to create near-duplicates
         modified = words.copy()
-        num_changes = int(len(words) * variation * (i + 1) / count)
+        num_changes = max(1, int(len(words) * variation * (i + 1) / count))
         for _ in range(num_changes):
             idx = random.randint(0, len(modified) - 1)
             modified[idx] = f"word{random.randint(0, 1000)}"

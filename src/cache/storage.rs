@@ -129,7 +129,7 @@ impl SQLiteStorage {
 
         // 4. Return results in order
         let results = fingerprints.iter()
-            .map(|fp| found_map.remove(fp)) 
+            .map(|fp| found_map.get(fp).cloned()) 
             .collect();
 
         Ok(results)
@@ -338,9 +338,9 @@ impl SQLiteStorage {
             bands_d.push((fp & 0xFFFF) as i64);
         }
 
-        // 2. Build ONE Dynamic Query
+        // 2. Build ONE Metadata Query (Deferred Loading)
         let q = format!(
-            "SELECT rowid, fingerprint, data FROM fuzzy_cache WHERE 
+            "SELECT rowid, fingerprint FROM fuzzy_cache WHERE 
              band_a IN ({}) OR 
              band_b IN ({}) OR 
              band_c IN ({}) OR 
@@ -358,51 +358,94 @@ impl SQLiteStorage {
         for b in &bands_c { params.push(b); }
         for b in &bands_d { params.push(b); }
 
-        // 4. Execute & Collect Candidates
+        // 4. Execute & Filter Metadata
         let mut stmt = match self.conn.prepare(&q) {
             Ok(s) => s,
             Err(_) => return vec![None; targets.len()],
         };
         
-        // Deduplicate candidates by rowid (a row might match multiple bands)
-        let mut candidates: FxHashMap<i64, (u64, String)> = FxHashMap::default();
-        
+        let mut candidates: FxHashMap<i64, u64> = FxHashMap::default();
         let rows = match stmt.query_map(&*params, |row| {
-            Ok((
-                row.get::<_, i64>(0)?,    // rowid
-                row.get::<_, i64>(1)?,    // fingerprint
-                row.get::<_, String>(2)?  // data
-            ))
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
         }) {
             Ok(r) => r,
             Err(_) => return vec![None; targets.len()],
         };
 
         for r in rows {
-            if let Ok((id, fp_i64, data)) = r {
-                candidates.insert(id, (fp_i64 as u64, data));
+            if let Ok((id, fp_i64)) = r {
+                candidates.insert(id, fp_i64 as u64);
             }
         }
 
-        // 5. Match Candidates to Targets
-        let mut results = vec![None; targets.len()];
+        // Identify which targets matched which candidates (rowid -> targets_indices)
+        // matches: rowid -> best_dist
+        let mut match_map: FxHashMap<i64, u32> = FxHashMap::default();
+        let mut winning_rowids = Vec::new();
+        let mut target_to_rowid = vec![None; targets.len()];
 
         for (i, &target_fp) in targets.iter().enumerate() {
             let mut best_dist = u32::MAX;
-            let mut best_match: Option<String> = None;
+            let mut best_rowid = None;
 
-            for (_id, (cand_fp, cand_data)) in &candidates {
+            for (&id, &cand_fp) in &candidates {
                 let dist = (target_fp ^ cand_fp).count_ones();
-                
                 if dist <= threshold && dist < best_dist {
                     best_dist = dist;
-                    best_match = Some(cand_data.clone());
-                    
-                    // Exact match is always best
+                    best_rowid = Some(id);
                     if dist == 0 { break; }
                 }
             }
-            results[i] = best_match;
+            
+            if let Some(id) = best_rowid {
+                target_to_rowid[i] = Some(id);
+                if !match_map.contains_key(&id) {
+                    match_map.insert(id, best_dist);
+                    winning_rowids.push(id);
+                }
+            }
+        }
+
+        if winning_rowids.is_empty() {
+            return vec![None; targets.len()];
+        }
+
+        // 5. Fetch DATA only for winners
+        let placeholders: Vec<&str> = vec!["?"; winning_rowids.len()];
+        let fetch_q = format!(
+            "SELECT rowid, data FROM fuzzy_cache WHERE rowid IN ({})",
+            placeholders.join(",")
+        );
+        
+        let mut fetch_stmt = match self.conn.prepare(&fetch_q) {
+            Ok(s) => s,
+            Err(_) => return vec![None; targets.len()],
+        };
+
+        let fetch_params: Vec<&dyn rusqlite::ToSql> = winning_rowids.iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
+
+        let data_rows = match fetch_stmt.query_map(&*fetch_params, |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        }) {
+            Ok(r) => r,
+            Err(_) => return vec![None; targets.len()],
+        };
+
+        let mut data_map: FxHashMap<i64, String> = FxHashMap::default();
+        for r in data_rows {
+            if let Ok((id, data)) = r {
+                data_map.insert(id, data);
+            }
+        }
+
+        // 6. Build final results
+        let mut results = vec![None; targets.len()];
+        for i in 0..targets.len() {
+            if let Some(rowid) = target_to_rowid[i] {
+                results[i] = data_map.get(&rowid).cloned();
+            }
         }
 
         results
