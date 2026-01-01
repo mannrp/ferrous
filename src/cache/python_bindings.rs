@@ -6,7 +6,7 @@ use pyo3::exceptions::PyRuntimeError;
 /// 
 /// It combines a SimHash generator for computing fingerprints and 
 /// an SQLite database for persistent storage.
-#[pyclass]
+#[pyclass(unsendable)]
 pub struct FuzzyCache {
     hasher: SimHash,
     storage: SQLiteStorage,
