@@ -24,7 +24,9 @@ impl PyMarkdownChunker {
     /// 
     /// Returns:
     ///     list[str]: A list of chunks.
-    pub fn chunk(&self, md: &str) -> Vec<String> {
-        self.inner.chunk(md)
+    /// Returns:
+    ///     list[str]: A list of chunks.
+    pub fn chunk(&self, py: Python<'_>, md: String) -> Vec<String> {
+        py.allow_threads(|| self.inner.chunk(&md))
     }
 }

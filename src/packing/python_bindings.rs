@@ -30,7 +30,9 @@ impl PyContextPacker {
     /// 
     /// Returns:
     ///     str: The packed and ranked context.
-    pub fn pack(&self, documents: Vec<String>) -> String {
-        self.inner.pack(&documents)
+    /// Returns:
+    ///     str: The packed and ranked context.
+    pub fn pack(&self, py: Python<'_>, documents: Vec<String>) -> String {
+        py.allow_threads(|| self.inner.pack(&documents))
     }
 }

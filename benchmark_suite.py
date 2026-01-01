@@ -26,6 +26,12 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional, Callable
+try:
+    import networkx as nx
+    import numpy as np
+except ImportError:
+    nx = None
+    np = None
 
 # ==============================================================================
 # CONFIGURATION
@@ -493,6 +499,87 @@ class PackingBenchmarks:
         except ImportError:
             print("  WARNING: nltk not installed")
         
+        # Python TextRank (numpy + networkx) - The "Full Pipeline" Comparison
+        if nx and np:
+            try:
+                from nltk.tokenize import sent_tokenize
+                from nltk.tokenize import word_tokenize
+                # Ensure stopwords are available
+                try:
+                    import nltk
+                    nltk.data.find('corpora/stopwords')
+                except LookupError:
+                    nltk.download('stopwords', quiet=True)
+                from nltk.corpus import stopwords
+                stop_words = set(stopwords.words('english'))
+
+                def python_textrank():
+                    # 1. Split
+                    all_sentences = []
+                    for doc in docs:
+                        all_sentences.extend(sent_tokenize(doc))
+                    
+                    if not all_sentences: return ""
+                    
+                    # 2. Similarity Matrix (Naive O(N^2))
+                    # Simplified for speed: just Jaccard of words
+                    n_sents = min(len(all_sentences), 300) # Apply naive cap 
+                    # If we didn't cap, this would take FOREVER.
+                    # Even with cap, 300^2 = 90k comparisons in Python
+                    
+                    current_sentences = all_sentences[:n_sents]
+                    
+                    # Tokenize all
+                    tokenized = [set(word_tokenize(s.lower())) - stop_words for s in current_sentences]
+                    
+                    # Build graph
+                    sim_mat = np.zeros((n_sents, n_sents))
+                    for i in range(n_sents):
+                        for j in range(n_sents):
+                            if i == j: continue
+                            
+                            w1 = tokenized[i]
+                            w2 = tokenized[j]
+                            
+                            if not w1 or not w2: continue
+                            
+                            # Jaccard
+                            intersection = len(w1.intersection(w2))
+                            union = len(w1) + len(w2) # Log denominator
+                            if union == 0: continue
+                            
+                            sim_mat[i][j] = intersection / (np.log(len(w1)) + np.log(len(w2)))
+                            
+                    # 3. PageRank
+                    nx_graph = nx.from_numpy_array(sim_mat)
+                    scores = nx.pagerank(nx_graph)
+                    
+                    # 4. Select top
+                    ranked = sorted(((scores[i], i) for i in range(n_sents)), reverse=True)
+                    
+                    # Just select top 5 for benchmark speed (simulating work)
+                    return " ".join([current_sentences[i] for _, i in ranked[:5]])
+
+                stats = benchmark_function(python_textrank, iterations=1) # Only run once, it's slow
+                results.append(BenchmarkResult(
+                    name="context_packing_full_pipeline",
+                    component="packing",
+                    implementation="python_textrank",
+                    metric="latency_ms",
+                    value=stats["mean"],
+                    unit="ms",
+                    scale=f"{self.num_docs} docs",
+                    iterations=1,
+                    std_dev=0,
+                    min_val=stats["mean"],
+                    max_val=stats["mean"],
+                ))
+
+            except Exception as e:
+                  print(f"  WARNING: nltk error: {e}")
+        else:
+             print("  WARNING: networkx or numpy not installed, skipping python baseline")
+             
         return results
 
 
@@ -547,6 +634,73 @@ class QualityBenchmarks:
         
         return results
 
+
+class NeedleBenchmarks:
+    """Needle in a Haystack - Recall Benchmark"""
+    
+    def run(self) -> List[BenchmarkResult]:
+        results = []
+        print("\n  Needle benchmark: Recall of specific facts at depth")
+        
+        try:
+            from ferrous import ContextPacker
+            
+            # Setup: Create a long document (2000 sentences)
+            # 2000 sentences is well above the 300 cap.
+            # Truncation would fail at index > 300.
+            # TF-IDF should rescue them if they are distinct.
+            
+            filler = "The quick brown fox jumps over the lazy dog. "
+            sentences = [filler for _ in range(2000)]
+            
+            # Insert Needles
+            needles = [
+                (0, "The secret code is ALPHA."),      # Start (always kept)
+                (290, "The secret code is BRAVO."),    # Near truncation boundary
+                (310, "The secret code is CHARLIE."),  # Just past 300 cap
+                (1000, "The secret code is DELTA."),   # Middle
+                (1999, "The secret code is ECHO."),    # End
+            ]
+            
+            for idx, text in needles:
+                sentences[idx] = text
+                
+            doc = " ".join(sentences)
+            
+            # Pack
+            packer = ContextPacker(max_tokens=6000) # Give enough budget
+            packed = packer.pack([doc])
+            
+            found_count = 0
+            for _, needle in needles:
+                if needle in packed:
+                    print(f"    FOUND: {needle}")
+                    found_count += 1
+                else:
+                    print(f"    MISS:  {needle}")
+            
+            recall = found_count / len(needles)
+            print(f"    Recall: {recall:.0%}")
+            
+            results.append(BenchmarkResult(
+                name="needle_recall",
+                component="quality",
+                implementation="ferrous_tfidf",
+                metric="recall",
+                value=recall,
+                unit="ratio",
+                scale="2000_sentences",
+                iterations=1,
+                std_dev=0,
+                min_val=recall,
+                max_val=recall,
+            ))
+            
+        except ImportError:
+            print("  WARNING: ferrous not installed")
+            
+        return results
+
 # ==============================================================================
 # MAIN RUNNER
 # ==============================================================================
@@ -567,6 +721,7 @@ def run_all_benchmarks(scale: str = "medium", components: Optional[List[str]] = 
         ("cache", CacheBenchmarks(scale_config)),
         ("packing", PackingBenchmarks(scale_config)),
         ("quality", QualityBenchmarks()),
+        ("needle", NeedleBenchmarks()),
     ]
     
     for name, bench in benchmarks:
@@ -697,7 +852,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ferrous Benchmark Suite")
     parser.add_argument("--scale", choices=list(SCALES.keys()), default="medium",
                         help="Benchmark scale (default: medium)")
-    parser.add_argument("--component", nargs="+", choices=["chunking", "cache", "packing", "quality"],
+    parser.add_argument("--component", nargs="+", choices=["chunking", "cache", "packing", "quality", "needle"],
                         help="Specific components to benchmark")
     parser.add_argument("--log", type=str, default="benchmark_results.json",
                         help="Output file for results (default: benchmark_results.json)")

@@ -30,14 +30,39 @@ impl ContextPacker {
         if sentences.is_empty() { return String::new(); }
 
         // 2. Cap sentence count to bound TextRank's O(n²) complexity
-        // 300 sentences = 90k comparisons, ~30ms. 1000 sentences = 1M comparisons, ~300ms.
+        // 300 sentences = 90k comparisons, ~30ms.
+        // If we have more than 300, we use TF-IDF (O(n)) to find the most "information-dense" 300.
         const MAX_SENTENCES: usize = 300;
+        
+        // This vector holds the INDICES of sentences we decide to keep
+        let mut keep_indices: Vec<usize> = (0..sentences.len()).collect();
+
         if sentences.len() > MAX_SENTENCES {
-            sentences.truncate(MAX_SENTENCES);
+            // Use TF-IDF to score all sentences
+            let scores = crate::packing::tfidf::TfidfScorer::score_sentences(&sentences);
+            
+            // Sort by score descending
+            let mut sorted_scores = scores;
+            sorted_scores.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+            
+            // Keep top MAX_SENTENCES
+            keep_indices = sorted_scores.iter()
+                .take(MAX_SENTENCES)
+                .map(|(_, idx)| *idx)
+                .collect();
+                
+            // Sort indices to maintain original document flow/order
+            keep_indices.sort();
         }
 
-        // 3. Rank sentences using TextRank
-        let ranked = self.ranker.rank_sentences(&sentences);
+        // Filter sentences to just the kept ones
+        // We do this so TextRank only sees the "important" ones
+        let filtered_sentences: Vec<String> = keep_indices.iter()
+            .map(|&idx| sentences[idx].clone())
+            .collect();
+
+        // 3. Rank sentences using TextRank (on the filtered subset)
+        let ranked = self.ranker.rank_sentences(&filtered_sentences);
 
         // 4. Selection (MMR - Simplified for V1)
         // We pick top sentences until the budget is full.
@@ -46,7 +71,7 @@ impl ContextPacker {
         let mut current_tokens = 0;
 
         for (_score, idx) in ranked {
-            let sentence = &sentences[idx];
+            let sentence = &filtered_sentences[idx];
             let sentence_len = sentence.len(); // Proxy for tokens
 
             if current_tokens + sentence_len <= self.max_tokens {
