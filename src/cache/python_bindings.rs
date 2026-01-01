@@ -80,11 +80,20 @@ impl FuzzyCache {
         }
 
         // 3. Perform batch fuzzy search on misses using Pigeonhole indexes
+        // SAFETY: Chunk to 200 items max (200 * 4 bands = 800 params < 999 SQLite limit)
+        const PIGEONHOLE_CHUNK_SIZE: usize = 200;
+        
         if !misses_fps.is_empty() {
-            let fuzzy_results = self.storage.find_nearby_batch_pigeonhole(&misses_fps, self.threshold);
-            for (i, res) in fuzzy_results.into_iter().enumerate() {
-                if res.is_some() {
-                    results[misses_indices[i]] = res;
+            for chunk_start in (0..misses_fps.len()).step_by(PIGEONHOLE_CHUNK_SIZE) {
+                let chunk_end = (chunk_start + PIGEONHOLE_CHUNK_SIZE).min(misses_fps.len());
+                let chunk = &misses_fps[chunk_start..chunk_end];
+                
+                let fuzzy_results = self.storage.find_nearby_batch_pigeonhole(chunk, self.threshold);
+                
+                for (j, res) in fuzzy_results.into_iter().enumerate() {
+                    if res.is_some() {
+                        results[misses_indices[chunk_start + j]] = res;
+                    }
                 }
             }
         }
