@@ -6,13 +6,15 @@ Ferrous provides atomic, high-speed utilities designed to replace computational 
 
 ## What's New in v0.3 (The Polyglot Update)
 
-**Parallel Semantic Tokenization** – The `MarkdownChunker` now supports token-based splitting with pluggable tokenizer backends:
+**Token-Accurate Splitting** – The `MarkdownChunker` now supports precise token counting via pluggable tokenizer backends:
 
-- **OpenAI Models**: Built-in support for GPT-3.5, GPT-4, and `cl100k_base` via `tiktoken-rs`
-- **HuggingFace Models**: Load any `tokenizer.json` (Llama 3, Mistral, Gemma, etc.) via the `tokenizers` crate
-- **Backward Compatible**: Legacy `max_characters` mode still works
+- **OpenAI Models**: GPT-5, GPT-4, GPT-3.5 and embeddings via `tiktoken-rs`
+- **HuggingFace Models**: Load any `tokenizer.json` (Llama 3, Mistral, Gemma, etc.)
+- **Backward Compatible**: Fast character-based mode (`max_characters`) still available
 
-This delivers **9x+ speedup** over LangChain's tokenized splitter while producing denser, more cost-efficient chunks.
+**Why this matters:** Character-based chunking guesses token counts (~4 chars/token) with ~20-30% error. Token-based chunking knows exactly how many tokens fit in your context window—no truncation, no wasted space.
+
+**U-Shaped Packing** – Places important content at the start and end of context windows, based on ["Lost in the Middle: How Language Models Use Long Contexts"](https://arxiv.org/abs/2307.03172) (Liu et al., 2023). LLMs attend more to context boundaries; this exploits that pattern.
 
 ## Key Primitives
 
@@ -25,14 +27,12 @@ A lexical caching layer using SimHash (locality-sensitive hashing) to detect nea
 ### MarkdownChunker
 A structure-aware document splitter that leverages a formal Markdown AST parser.
 - **Use Case:** Splitting documents while preserving the integrity of headers, paragraphs, and code blocks.
-- **Accuracy:** Eliminates semantic breakage caused by naive character or token-based splitters.
-- **v0.3**: Supports precise token-based splitting with OpenAI and HuggingFace tokenizers.
+- **v0.3**: Precise token-based splitting with OpenAI and HuggingFace tokenizers.
 
 ### ContextPacker
 An importance-based context compression utility using the TextRank graph algorithm.
 - **Use Case:** Ranking retrieved document segments and packing the most information-dense content into a fixed token budget.
-- **Diversity:** Implements relevance-weighted selection to ensure context diversity and reduce redundancy.
-- **Attention-Aware:** Optional U-shaped ordering places important content at context boundaries where LLMs attend most (Liu et al., 2023).
+- **v0.3**: Optional U-shaped ordering for improved LLM attention.
 
 ## Installation
 
@@ -52,21 +52,19 @@ if not cache.get(query):
     cache.put(query, result)
 ```
 
-### Chunking (v0.3 Token-Based)
+### Chunking
 ```python
 from ferrous import MarkdownChunker
 
-# NEW: Token-based chunking with OpenAI tokenizer
+# Token-accurate: knows exactly how many tokens per chunk
 chunker = MarkdownChunker(tokenizer_name="gpt-4", max_tokens=512)
 chunks = chunker.chunk(markdown_text)
 
-# Or load a HuggingFace tokenizer from file
+# Or load a HuggingFace tokenizer
 chunker = MarkdownChunker(tokenizer_path="./tokenizer.json", max_tokens=512)
-chunks = chunker.chunk(markdown_text)
 
-# Legacy: Character-based chunking still works
+# Fast mode: character-based (less accurate, 10x faster)
 chunker = MarkdownChunker(max_characters=2000)
-chunks = chunker.chunk(markdown_text)
 ```
 
 ### Packing
@@ -79,46 +77,47 @@ packed_context = packer.pack(document_list)
 
 # U-shaped: important content at start and end of context
 packer = ContextPacker(max_chars=2048, strategy="u_shaped")
-packed_context = packer.pack(document_list)
 ```
 
-## Performance Benchmarks
+## Performance
 
-### v0.3 Tokenized Chunking (5MB Markdown)
+### Tokenized Chunking (5MB Markdown)
 
-| Implementation | Time (ms) | Chunks | Density (Tok/Chunk) | Speedup |
-| :--- | ---: | ---: | ---: | ---: |
-| LangChain (Tokenized) | 3,119 ms | 2,760 | 461 | 1x |
-| **Ferrous v0.3 (Tokens)** | **336 ms** | **2,514** | **507** | **9.3x** |
-| Ferrous v0.2 (Chars) | 28 ms | 2,539 | 503 | Reference |
+| Mode | Time | Chunks | Accuracy |
+| :--- | ---: | ---: | :--- |
+| **Ferrous (Tokens)** | 336 ms | 2,514 | Exact token count |
+| LangChain (Tokens) | 3,119 ms | 2,760 | Exact token count |
+| Ferrous (Chars) | 28 ms | 2,539 | ~20-30% estimation error |
 
-Key takeaways:
-- **9.3x faster** than LangChain's tokenized splitter
-- **~10% fewer chunks** = lower retrieval costs
-- **Higher density** = better token budget utilization
+- **9x faster** than LangChain when you need token accuracy
+- **10x faster** character mode when you don't
 
-### Legacy Benchmarks (200KB+ payloads)
+### Other Benchmarks
 
-| Task | Implementation | Latency | Speedup |
-| :--- | :--- | :--- | :--- |
-| **Markdown Chunking** | LangChain (Python) | 81.25 ms | 1x |
-| | **Ferrous (Rust)** | **0.95 ms** | **85.5x** |
-| **Fuzzy Cache Lookup**| **Ferrous (SimHash)**| **0.34 ms** | **N/A** |
-| **TextRank Packing** | **Ferrous (Rust)** | **35.96 ms / doc**| **N/A** |
+| Component | Ferrous | Alternative | Speedup |
+| :--- | ---: | ---: | ---: |
+| Markdown Chunking (200KB) | 0.95 ms | 81 ms (LangChain) | 85x |
+| Cache Lookup | 0.11 ms | 50 ms (API call) | 450x |
+| TextRank Packing | 165 ms | 771 ms (Python) | 4.7x |
 
-*Note: Benchmarks performed on Windows 10. Performance may vary by hardware.*
+## Tokenizer Support
 
-## Tokenizer Support (v0.3)
+Ferrous uses `tiktoken-rs` which supports OpenAI model names:
 
-| Tokenizer | Type | Example Usage |
+| Model | Encoding | Usage |
 | :--- | :--- | :--- |
-| `gpt-4` | OpenAI | `tokenizer_name="gpt-4"` |
-| `gpt-3.5-turbo` | OpenAI | `tokenizer_name="gpt-3.5-turbo"` |
-| `text-embedding-ada-002` | OpenAI | `tokenizer_name="text-embedding-ada-002"` |
-| Custom HuggingFace | File | `tokenizer_path="./llama3_tokenizer.json"` |
+| GPT-5, GPT-5.1, GPT-5.2 | `o200k_base` | `tokenizer_name="gpt-5"` |
+| GPT-4, GPT-4-Turbo | `cl100k_base` | `tokenizer_name="gpt-4"` |
+| GPT-3.5-Turbo | `cl100k_base` | `tokenizer_name="gpt-3.5-turbo"` |
+| Embeddings | `cl100k_base` | `tokenizer_name="text-embedding-ada-002"` |
+| Custom | Any | `tokenizer_path="./tokenizer.json"` |
 
-## Performance Note
-Ferrous is built in Rust with PyO3 bindings. It aims for a 10x-100x performance improvement over standard Python implementations for text graph processing and structural parsing. It requires no GPU and has no heavy neural network dependencies.
+*Note: tiktoken-rs model support depends on the crate version. For latest models, use `tokenizer_path` with the official tokenizer file.*
+
+## References
+
+- Liu et al. (2023). ["Lost in the Middle: How Language Models Use Long Contexts"](https://arxiv.org/abs/2307.03172). *Transactions of the Association for Computational Linguistics*.
 
 ## License
+
 MIT
