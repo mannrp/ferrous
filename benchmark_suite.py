@@ -701,6 +701,80 @@ class NeedleBenchmarks:
             
         return results
 
+
+# ==============================================================================
+# QUALITATIVE COMPARISON
+# ==============================================================================
+
+def run_qualitative_comparison():
+    print("\n" + "="*60)
+    print("QUALITATIVE COMPARISON: Ferrous vs Python TextRank")
+    print("="*60)
+    
+    # 1. Setup a document with clear "important" sentences
+    # Sections with filler, but distinct headers/summaries
+    doc = (
+        "Introduction to Rust.\n" 
+        "Rust is a systems programming language that ensures memory safety. "
+        "It achieves this without a garbage collector. "
+        "This makes it ideal for high-performance applications. "
+        "Filler sentence about nothing important. " * 20 + 
+        "\nConclusion.\n"
+        "In summary, Rust offers a unique mix of speed and safety. "
+        "It is rapidly gaining adoption in the industry. "
+    )
+    
+    print(f"\nScanning Document ({len(doc)} chars)...")
+
+    # 2. Run Ferrous
+    try:
+        from ferrous import ContextPacker
+        start = time.perf_counter()
+        packer = ContextPacker(max_tokens=100) # Tight budget to force selection
+        ferrous_out = packer.pack([doc])
+        ferrous_time = (time.perf_counter() - start) * 1000
+        
+        print(f"\n[FERROUS] ({ferrous_time:.2f}ms)")
+        print(f"Output: {ferrous_out}")
+    except ImportError:
+        print("Ferrous not installed.")
+
+    # 3. Run Python TextRank (from earlier)
+    if nx and np:
+        try:
+            from nltk.tokenize import sent_tokenize, word_tokenize
+            from nltk.corpus import stopwords
+            stop_words = set(stopwords.words('english'))
+            
+            start = time.perf_counter()
+            # Naive Python Logic
+            sents = sent_tokenize(doc)
+            # ... (Simulate the graph logic from before for just this output)
+            n_sents = len(sents)
+            tokenized = [set(word_tokenize(s.lower())) - stop_words for s in sents]
+            sim_mat = np.zeros((n_sents, n_sents))
+            for i in range(n_sents):
+                for j in range(n_sents):
+                    if i == j: continue
+                    w1, w2 = tokenized[i], tokenized[j]
+                    if not w1 or not w2: continue
+                    intersect = len(w1.intersection(w2))
+                    log_sum = np.log(len(w1)) + np.log(len(w2))
+                    if log_sum > 0: sim_mat[i][j] = intersect / log_sum
+            
+            nx_graph = nx.from_numpy_array(sim_mat)
+            scores = nx.pagerank(nx_graph)
+            ranked = sorted(((scores[i], i) for i in range(n_sents)), reverse=True)
+            # Pick top 2 to match tight budget
+            py_out = " ".join([sents[i] for _, i in ranked[:2]])
+            py_time = (time.perf_counter() - start) * 1000
+            
+            print(f"\n[PYTHON] ({py_time:.2f}ms)")
+            print(f"Output: {py_out}")
+            
+        except ImportError:
+            pass
+
 # ==============================================================================
 # MAIN RUNNER
 # ==============================================================================
@@ -863,6 +937,10 @@ def main():
     
     # Run benchmarks
     report = run_all_benchmarks(scale=args.scale, components=args.component)
+    
+    # Run qualitative check if requested
+    if not args.component or "quality" in args.component:
+        run_qualitative_comparison()
     
     # Print results
     print_report(report)
