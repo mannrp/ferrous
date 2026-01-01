@@ -56,10 +56,13 @@ impl FuzzyCache {
     pub fn get_batch(&self, texts: Vec<String>) -> PyResult<Vec<Option<String>>> {
         use rayon::prelude::*;
         
+        // Sequential for small batches (Rayon overhead not worth it)
         let hasher = self.hasher.clone();
-        let fingerprints: Vec<u64> = texts.par_iter()
-            .map(|text| hasher.fingerprint(text))
-            .collect();
+        let fingerprints: Vec<u64> = if texts.len() < 500 {
+            texts.iter().map(|t| hasher.fingerprint(t)).collect()
+        } else {
+            texts.par_iter().map(|t| hasher.fingerprint(t)).collect()
+        };
 
         // 1. Try exact batch match (O(1) query)
         let mut results = self.storage.get_exact_batch(&fingerprints)
@@ -76,12 +79,21 @@ impl FuzzyCache {
             }
         }
 
-        // 3. Perform batch fuzzy search on misses
+        // 3. Perform batch fuzzy search on misses using Pigeonhole indexes
+        // SAFETY: Chunk to 200 items max (200 * 4 bands = 800 params < 999 SQLite limit)
+        const PIGEONHOLE_CHUNK_SIZE: usize = 200;
+        
         if !misses_fps.is_empty() {
-            let fuzzy_results = self.storage.find_nearby_batch(&misses_fps, self.threshold);
-            for (i, res) in fuzzy_results.into_iter().enumerate() {
-                if res.is_some() {
-                    results[misses_indices[i]] = res;
+            for chunk_start in (0..misses_fps.len()).step_by(PIGEONHOLE_CHUNK_SIZE) {
+                let chunk_end = (chunk_start + PIGEONHOLE_CHUNK_SIZE).min(misses_fps.len());
+                let chunk = &misses_fps[chunk_start..chunk_end];
+                
+                let fuzzy_results = self.storage.find_nearby_batch_pigeonhole(chunk, self.threshold);
+                
+                for (j, res) in fuzzy_results.into_iter().enumerate() {
+                    if res.is_some() {
+                        results[misses_indices[chunk_start + j]] = res;
+                    }
                 }
             }
         }
@@ -101,13 +113,23 @@ impl FuzzyCache {
     pub fn put_batch(&mut self, items: Vec<(String, String)>) -> PyResult<()> {
         use rayon::prelude::*;
         
+        // Sequential for small batches (Rayon overhead not worth it)
         let hasher = self.hasher.clone();
-        let batch_items: Vec<(u64, String, String)> = items.into_par_iter()
-            .map(|(text, data)| {
-                let fp = hasher.fingerprint(&text);
-                (fp, text, data)
-            })
-            .collect();
+        let batch_items: Vec<(u64, String, String)> = if items.len() < 500 {
+            items.into_iter()
+                .map(|(text, data)| {
+                    let fp = hasher.fingerprint(&text);
+                    (fp, text, data)
+                })
+                .collect()
+        } else {
+            items.into_par_iter()
+                .map(|(text, data)| {
+                    let fp = hasher.fingerprint(&text);
+                    (fp, text, data)
+                })
+                .collect()
+        };
 
         self.storage.put_batch(batch_items)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
