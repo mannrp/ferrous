@@ -62,6 +62,52 @@ impl SQLiteStorage {
         }
     }
 
+    /// Optimized batch retrieval using a single SQL query.
+    pub fn get_exact_batch(&self, fingerprints: &[u64]) -> Result<Vec<Option<String>>> {
+        if fingerprints.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // 1. Build query dynamically: "SELECT fingerprint, data FROM ... WHERE fingerprint IN (?,?,?)"
+        // Note: SQLite limits the number of variables (usually 999 or 32766). 
+        // We should chunk this if it exceeds limits, but for v0.2 we assume sensible batch sizes (<900).
+        let placeholders: Vec<&str> = vec!["?"; fingerprints.len()];
+        let query = format!(
+            "SELECT fingerprint, data FROM fuzzy_cache WHERE fingerprint IN ({})",
+            placeholders.join(",")
+        );
+
+        let mut stmt = self.conn.prepare(&query)?;
+        
+        // 2. Map params - cast to i64 to match SQLite storage format
+        let fingerprints_i64: Vec<i64> = fingerprints.iter().map(|f| *f as i64).collect();
+        let params: Vec<&dyn rusqlite::ToSql> = fingerprints_i64.iter()
+            .map(|f| f as &dyn rusqlite::ToSql)
+            .collect();
+
+        // 3. Execute and build map
+        let mut found_map = std::collections::HashMap::new();
+        
+        // Use query_map to iterate rows
+        let rows = stmt.query_map(&*params, |row| {
+             let f: i64 = row.get(0)?;
+             let d: String = row.get(1)?;
+             Ok((f, d))
+        })?;
+
+        for row in rows {
+            let (f, d) = row?;
+            found_map.insert(f as u64, d);
+        }
+
+        // 4. Return results in order
+        let results = fingerprints.iter()
+            .map(|fp| found_map.remove(fp)) 
+            .collect();
+
+        Ok(results)
+    }
+
     /// Finds the closest match within a Hamming distance threshold.
     /// This is an O(N) operation currently. For massive caches (1M+), 
     /// we would want to use a BK-Tree or Multi-index hashing.
@@ -85,6 +131,62 @@ impl SQLiteStorage {
         }
 
         Ok(None)
+    }
+
+    /// Stores multiple results in the cache using a single transaction.
+    /// This is significantly faster than multiple single `put` calls.
+    pub fn put_batch(&mut self, items: Vec<(u64, String, String)>) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO fuzzy_cache (fingerprint, input_text, data) VALUES (?1, ?2, ?3)"
+            )?;
+            for (fp, text, data) in items {
+                stmt.execute(params![fp as i64, text, data])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Performs single-pass fuzzy search for multiple fingerprints.
+    /// O(N) over the database, but amortized over M queries.
+    pub fn find_nearby_batch(&self, queries: &[u64], threshold: u32) -> Vec<Option<String>> {
+        let mut results = vec![None; queries.len()];
+        let mut found_count = 0;
+        
+        let mut stmt = match self.conn.prepare("SELECT fingerprint, data FROM fuzzy_cache") {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+
+        let rows = match stmt.query_map([], |row| {
+            let f: i64 = row.get(0)?;
+            let d: String = row.get(1)?;
+            Ok((f as u64, d))
+        }) {
+            Ok(r) => r,
+            Err(_) => return results,
+        };
+
+        for row in rows {
+            if let Ok((f, d)) = row {
+                for (i, &q) in queries.iter().enumerate() {
+                    if results[i].is_none() {
+                        let dist = (f ^ q).count_ones();
+                        if dist <= threshold {
+                            results[i] = Some(d.clone());
+                            found_count += 1;
+                        }
+                    }
+                }
+            }
+            if found_count == queries.len() {
+                break;
+            }
+        }
+
+        results
     }
 }
 

@@ -52,10 +52,64 @@ impl FuzzyCache {
         Ok(result)
     }
 
+    /// Checks multiple texts at once. significantly faster due to reduced FFI and single-pass scan.
+    pub fn get_batch(&self, texts: Vec<String>) -> PyResult<Vec<Option<String>>> {
+        use rayon::prelude::*;
+        
+        let hasher = self.hasher.clone();
+        let fingerprints: Vec<u64> = texts.par_iter()
+            .map(|text| hasher.fingerprint(text))
+            .collect();
+
+        // 1. Try exact batch match (O(1) query)
+        let mut results = self.storage.get_exact_batch(&fingerprints)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        // 2. Identify misses for fuzzy search
+        let mut misses_indices = Vec::new();
+        let mut misses_fps = Vec::new();
+
+        for (i, res) in results.iter().enumerate() {
+            if res.is_none() {
+                misses_indices.push(i);
+                misses_fps.push(fingerprints[i]);
+            }
+        }
+
+        // 3. Perform batch fuzzy search on misses
+        if !misses_fps.is_empty() {
+            let fuzzy_results = self.storage.find_nearby_batch(&misses_fps, self.threshold);
+            for (i, res) in fuzzy_results.into_iter().enumerate() {
+                if res.is_some() {
+                    results[misses_indices[i]] = res;
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Stores a new text-result pair in the cache.
     pub fn put(&self, text: &str, data: &str) -> PyResult<()> {
         let fingerprint = self.hasher.fingerprint(text);
         self.storage.put(fingerprint, text, data)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Stores multiple text-result pairs in a single transaction.
+    pub fn put_batch(&mut self, items: Vec<(String, String)>) -> PyResult<()> {
+        use rayon::prelude::*;
+        
+        let hasher = self.hasher.clone();
+        let batch_items: Vec<(u64, String, String)> = items.into_par_iter()
+            .map(|(text, data)| {
+                let fp = hasher.fingerprint(&text);
+                (fp, text, data)
+            })
+            .collect();
+
+        self.storage.put_batch(batch_items)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(())
     }
