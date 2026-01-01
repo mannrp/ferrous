@@ -20,8 +20,8 @@ impl ContextPacker {
     /// Packs multiple documents into a single dense context string.
     pub fn pack(&self, documents: &[String]) -> String {
         // 1. Break documents into sentences using Unicode-compliant segmentation (UAX #29)
-        // This correctly handles abbreviations (Dr., Mr.), numbers ($3.50), URLs, and CJK text.
-        let sentences: Vec<String> = documents.iter()
+        // This correctly handles numbers ($3.50), URLs (example.com), and CJK text.
+        let mut sentences: Vec<String> = documents.iter()
             .flat_map(|doc| doc.unicode_sentences())
             .map(|s| s.trim().to_string())
             .filter(|s| s.len() > 5)  // Skip very short fragments
@@ -29,10 +29,17 @@ impl ContextPacker {
 
         if sentences.is_empty() { return String::new(); }
 
-        // 2. Rank sentences using TextRank
+        // 2. Cap sentence count to bound TextRank's O(n²) complexity
+        // 300 sentences = 90k comparisons, ~30ms. 1000 sentences = 1M comparisons, ~300ms.
+        const MAX_SENTENCES: usize = 300;
+        if sentences.len() > MAX_SENTENCES {
+            sentences.truncate(MAX_SENTENCES);
+        }
+
+        // 3. Rank sentences using TextRank
         let ranked = self.ranker.rank_sentences(&sentences);
 
-        // 3. Selection (MMR - Simplified for V1)
+        // 4. Selection (MMR - Simplified for V1)
         // We pick top sentences until the budget is full.
         // We skip sentences that are too similar to already selected ones.
         let mut selected = Vec::new();
