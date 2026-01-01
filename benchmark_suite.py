@@ -75,6 +75,43 @@ class BenchmarkReport:
     comparisons: List[Dict[str, Any]]
     
     def to_dict(self) -> dict:
+        comparisons = []
+        
+        # Helper to find result by implementation
+        def find_res(impl, bench_name):
+            return next((r for r in self.results if r.implementation == impl and r.name == bench_name), None)
+
+        # 1. Chunking Speedup
+        ferrous_chunk = find_res("ferrous", "markdown_chunking")
+        lc_rec = find_res("langchain_recursive", "markdown_chunking")
+        
+        if ferrous_chunk and lc_rec:
+            comparisons.append({
+                "benchmark": "markdown_chunking",
+                "scale": ferrous_chunk.scale,
+                "ferrous": ferrous_chunk.value,
+                "alternative": "langchain_recursive",
+                "alternative_value": lc_rec.value,
+                "speedup": lc_rec.value / ferrous_chunk.value,
+                "unit": ferrous_chunk.unit
+            })
+
+        # 2. Cache ROI (vs Network)
+        ferrous_cache = find_res("ferrous", "cache_lookup_exact")
+        network = find_res("network_api_call", "cache_lookup_exact")
+        
+        if ferrous_cache and network:
+             comparisons.append({
+                "benchmark": "cache_roi",
+                "scale": ferrous_cache.scale,
+                "ferrous": ferrous_cache.value,
+                "alternative": "network_api_call",
+                "alternative_value": network.value,
+                "speedup": network.value / ferrous_cache.value,
+                "unit": "µs"
+            })
+            
+        self.comparisons = comparisons
         return {
             "timestamp": self.timestamp,
             "platform": self.platform,
@@ -373,11 +410,45 @@ class CacheBenchmarks:
                     max_val=stats["max"] * 1000,
                 ))
                 
+                # Explicitly close connection by dropping the object
+                del cache
+                import gc
+                gc.collect()
+                
             finally:
-                os.unlink(db_path)
+                # Windows file locking requires retry mechanism
+                import time
+                for _ in range(10):
+                    try:
+                        if os.path.exists(db_path):
+                            os.unlink(db_path)
+                        break
+                    except OSError:
+                        time.sleep(0.5)
                 
         except ImportError:
             print("  WARNING: ferrous not installed")
+
+        # Simulated API Call (The real problem we solve)
+        def simulated_openai_call():
+             # Simulate network latency (e.g. 50ms which is optimistic)
+             time.sleep(0.05)
+             return "embedding_vector_data"
+
+        stats = benchmark_function(simulated_openai_call, iterations=10)
+        results.append(BenchmarkResult(
+            name="cache_lookup_exact",
+            component="cache",
+            implementation="network_api_call",
+            metric="latency_us",
+            value=stats["mean"] * 1000,
+            unit="µs",
+            scale=f"{len(texts)} entries",
+            iterations=10,
+            std_dev=stats["std_dev"] * 1000,
+            min_val=stats["min"] * 1000,
+            max_val=stats["max"] * 1000,
+        ))
         
         # Python dict baseline (exact match only)
         py_cache = {hashlib.md5(t.encode()).hexdigest(): f"resp_{i}" for i, t in enumerate(texts)}

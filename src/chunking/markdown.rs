@@ -1,4 +1,4 @@
-use pulldown_cmark::{Parser, Event, Tag, TagEnd};
+use pulldown_cmark::{Parser, Event};
 
 /// MarkdownChunker splits documents based on Markdown structure.
 /// 

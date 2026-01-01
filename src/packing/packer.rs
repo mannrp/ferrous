@@ -21,7 +21,7 @@ impl ContextPacker {
     pub fn pack(&self, documents: &[String]) -> String {
         // 1. Break documents into sentences using Unicode-compliant segmentation (UAX #29)
         // This correctly handles numbers ($3.50), URLs (example.com), and CJK text.
-        let mut sentences: Vec<String> = documents.iter()
+        let sentences: Vec<String> = documents.iter()
             .flat_map(|doc| doc.unicode_sentences())
             .map(|s| s.trim().to_string())
             .filter(|s| s.len() > 5)  // Skip very short fragments
