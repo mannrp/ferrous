@@ -1,0 +1,182 @@
+[
+  {
+    "timestamp": "2025-12-31T22:14:01.669069",
+    "platform": "Windows 10",
+    "python_version": "3.11.9",
+    "ferrous_version": "unknown",
+    "scale": "medium",
+    "results": [
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 101.62199730984867,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 100,
+        "std_dev": 5.208189449426252,
+        "min_val": 97.90004696696997,
+        "max_val": 135.7999863103032
+      },
+      {
+        "name": "cache_lookup_fuzzy",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 153.8899983279407,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 50,
+        "std_dev": 8.250591070155687,
+        "min_val": 147.50007539987564,
+        "max_val": 193.29995848238468
+      },
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "python_dict",
+        "metric": "latency_us",
+        "value": 0.15769980382174253,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 1000,
+        "std_dev": 0.07242935130075064,
+        "min_val": 0.09988434612751007,
+        "max_val": 1.600012183189392
+      }
+    ],
+    "comparisons": [
+      {
+        "benchmark": "cache_lookup_exact",
+        "scale": "1000 entries",
+        "ferrous": 101.62199730984867,
+        "alternative": "python_dict",
+        "alternative_value": 0.15769980382174253,
+        "speedup": 0.0,
+        "unit": "\u00b5s"
+      }
+    ]
+  },
+  {
+    "timestamp": "2025-12-31T22:18:13.791040",
+    "platform": "Windows 10",
+    "python_version": "3.11.9",
+    "ferrous_version": "unknown",
+    "scale": "medium",
+    "results": [
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 111.34200147353113,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 100,
+        "std_dev": 20.442765643403778,
+        "min_val": 100.19994806498289,
+        "max_val": 230.5000089108944
+      },
+      {
+        "name": "cache_lookup_fuzzy",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 109.13400445133448,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 50,
+        "std_dev": 14.303159238441705,
+        "min_val": 99.9000621959567,
+        "max_val": 188.60003910958767
+      },
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "python_dict",
+        "metric": "latency_us",
+        "value": 0.15760038513690233,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 1000,
+        "std_dev": 0.09905667886057565,
+        "min_val": 0.09988434612751007,
+        "max_val": 2.800021320581436
+      }
+    ],
+    "comparisons": []
+  },
+  {
+    "timestamp": "2025-12-31T22:18:40.985028",
+    "platform": "Windows 10",
+    "python_version": "3.11.9",
+    "ferrous_version": "unknown",
+    "scale": "medium",
+    "results": [
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 107.51500492915511,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 100,
+        "std_dev": 9.251506319770176,
+        "min_val": 100.99995415657759,
+        "max_val": 150.50009824335575
+      },
+      {
+        "name": "cache_lookup_fuzzy",
+        "component": "cache",
+        "implementation": "ferrous",
+        "metric": "latency_us",
+        "value": 161.98600875213742,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 50,
+        "std_dev": 11.541707603310217,
+        "min_val": 151.29998791962862,
+        "max_val": 201.40002015978098
+      },
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "network_api_call",
+        "metric": "latency_us",
+        "value": 50415.76003422961,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 10,
+        "std_dev": 109.63535003176398,
+        "min_val": 50243.400037288666,
+        "max_val": 50558.30010678619
+      },
+      {
+        "name": "cache_lookup_exact",
+        "component": "cache",
+        "implementation": "python_dict",
+        "metric": "latency_us",
+        "value": 0.23010012228041887,
+        "unit": "\u00b5s",
+        "scale": "1000 entries",
+        "iterations": 1000,
+        "std_dev": 0.056455152790619585,
+        "min_val": 0.19988510757684708,
+        "max_val": 1.100008375942707
+      }
+    ],
+    "comparisons": [
+      {
+        "benchmark": "cache_roi",
+        "scale": "1000 entries",
+        "ferrous": 107.51500492915511,
+        "alternative": "network_api_call",
+        "alternative_value": 50415.76003422961,
+        "speedup": 468.9183623016162,
+        "unit": "\u00b5s"
+      }
+    ]
+  }
+]

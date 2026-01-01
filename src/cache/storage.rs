@@ -13,6 +13,7 @@ impl SQLiteStorage {
     /// Opens or creates a new SQLite database at the specified path.
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         
         // Initialize the table if it doesn't exist.
         // We index the fingerprint for fast O(log N) lookups.

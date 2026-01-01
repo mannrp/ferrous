@@ -64,7 +64,7 @@ The following benchmarks were conducted on 200KB+ payloads, comparing Ferrous to
 | :--- | :--- | :--- | :--- |
 | **Markdown Chunking** | LangChain (Python) | 81.25 ms | 1x |
 | | **Ferrous (Rust)** | **0.95 ms** | **85.5x** |
-| **Fuzzy Cache Lookup**| **Ferrous (SimHash)**| **0.39 ms** | **N/A** |
+| **Fuzzy Cache Lookup**| **Ferrous (SimHash)**| **0.34 ms** | **N/A** |
 | **TextRank Packing** | **Ferrous (Rust)** | **35.96 ms / doc**| **N/A** |
 
 *Note: Benchmarks performed on Windows 10, AMD/Intel processors may vary. Fuzzy cache lookup includes SQLite overhead.*
