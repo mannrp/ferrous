@@ -313,22 +313,98 @@ impl SQLiteStorage {
         Ok(None)
     }
     
-    /// Performs batch fuzzy search using Pigeonhole Principle.
+    /// Performs batch fuzzy search using Pigeonhole Principle with a SINGLE SQL query.
     /// 
-    /// For each query, we use band indexes to find candidates instead of full scan.
-    pub fn find_nearby_batch_pigeonhole(&self, queries: &[u64], threshold: u32) -> Vec<Option<String>> {
-        let mut results = vec![None; queries.len()];
-        
-        if queries.is_empty() {
-            return results;
+    /// Instead of 100 separate queries, we consolidate into one:
+    /// `WHERE band_a IN (...) OR band_b IN (...) OR band_c IN (...) OR band_d IN (...)`
+    /// 
+    /// This fetches a "Candidate Soup" of ~100-200 rows, which we then filter in Rust.
+    /// Complexity: O(1) SQL query + O(N*K) in-memory filtering where K = candidates.
+    pub fn find_nearby_batch_pigeonhole(&self, targets: &[u64], threshold: u32) -> Vec<Option<String>> {
+        if targets.is_empty() {
+            return vec![];
         }
+
+        // 1. Prepare Band Collections
+        let mut bands_a: Vec<i64> = Vec::with_capacity(targets.len());
+        let mut bands_b: Vec<i64> = Vec::with_capacity(targets.len());
+        let mut bands_c: Vec<i64> = Vec::with_capacity(targets.len());
+        let mut bands_d: Vec<i64> = Vec::with_capacity(targets.len());
+
+        for &fp in targets {
+            bands_a.push(((fp >> 48) & 0xFFFF) as i64);
+            bands_b.push(((fp >> 32) & 0xFFFF) as i64);
+            bands_c.push(((fp >> 16) & 0xFFFF) as i64);
+            bands_d.push((fp & 0xFFFF) as i64);
+        }
+
+        // 2. Build ONE Dynamic Query
+        let q = format!(
+            "SELECT rowid, fingerprint, data FROM fuzzy_cache WHERE 
+             band_a IN ({}) OR 
+             band_b IN ({}) OR 
+             band_c IN ({}) OR 
+             band_d IN ({})",
+            vec!["?"; bands_a.len()].join(","),
+            vec!["?"; bands_b.len()].join(","),
+            vec!["?"; bands_c.len()].join(","),
+            vec!["?"; bands_d.len()].join(",")
+        );
+
+        // 3. Bind Parameters
+        let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(targets.len() * 4);
+        for b in &bands_a { params.push(b); }
+        for b in &bands_b { params.push(b); }
+        for b in &bands_c { params.push(b); }
+        for b in &bands_d { params.push(b); }
+
+        // 4. Execute & Collect Candidates
+        let mut stmt = match self.conn.prepare(&q) {
+            Ok(s) => s,
+            Err(_) => return vec![None; targets.len()],
+        };
         
-        for (i, &fp) in queries.iter().enumerate() {
-            if let Ok(Some(data)) = self.find_nearby_pigeonhole(fp, threshold) {
-                results[i] = Some(data);
+        // Deduplicate candidates by rowid (a row might match multiple bands)
+        let mut candidates: FxHashMap<i64, (u64, String)> = FxHashMap::default();
+        
+        let rows = match stmt.query_map(&*params, |row| {
+            Ok((
+                row.get::<_, i64>(0)?,    // rowid
+                row.get::<_, i64>(1)?,    // fingerprint
+                row.get::<_, String>(2)?  // data
+            ))
+        }) {
+            Ok(r) => r,
+            Err(_) => return vec![None; targets.len()],
+        };
+
+        for r in rows {
+            if let Ok((id, fp_i64, data)) = r {
+                candidates.insert(id, (fp_i64 as u64, data));
             }
         }
-        
+
+        // 5. Match Candidates to Targets
+        let mut results = vec![None; targets.len()];
+
+        for (i, &target_fp) in targets.iter().enumerate() {
+            let mut best_dist = u32::MAX;
+            let mut best_match: Option<String> = None;
+
+            for (_id, (cand_fp, cand_data)) in &candidates {
+                let dist = (target_fp ^ cand_fp).count_ones();
+                
+                if dist <= threshold && dist < best_dist {
+                    best_dist = dist;
+                    best_match = Some(cand_data.clone());
+                    
+                    // Exact match is always best
+                    if dist == 0 { break; }
+                }
+            }
+            results[i] = best_match;
+        }
+
         results
     }
 }
