@@ -1,6 +1,6 @@
 [package]
 name = "ferrous"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 authors = ["Mann Patel"]
 description = "High-performance RAG primitives in Rust"
@@ -31,11 +31,21 @@ murmurhash3 = "0.0.5"
 
 # Unicode-compliant text segmentation (UAX #29)
 unicode-segmentation = "1.12"
+
 rustc-hash = "2.1.1"
+
+# Tokenization Backends
+tiktoken-rs = "0.5"
+tokenizers = { version = "0.19", default-features = false, features = ["onig"] }
+
 
 [dev-dependencies]
 # For benchmarking
 criterion = "0.5"
 
+
 # For temporary file tests
 tempfile = "3.19"
+
+[workspace]
+members = ["crates/ferrous-code"]

@@ -1,12 +1,25 @@
 use crate::packing::textrank::TextRank;
 use unicode_segmentation::UnicodeSegmentation;
 
+/// Packing strategy for ordering selected content.
+#[derive(Clone, Copy, Default)]
+pub enum PackingStrategy {
+    /// Return content in importance-ranked order (best first).
+    #[default]
+    Ranked,
+    /// U-shaped ordering: place most important content at start and end.
+    /// Based on "Lost in the Middle" (Liu et al., 2023) - LLMs attend more
+    /// to the beginning and end of context, neglecting the middle.
+    UShaped,
+}
+
 /// ContextPacker takes a large number of retrieved documents and "packs" them 
 /// into a smaller token budget using importance-based ranking (TextRank) 
 /// and diversity-based selection (MMR).
 pub struct ContextPacker {
     max_chars: usize,
     ranker: TextRank,
+    strategy: PackingStrategy,
 }
 
 impl ContextPacker {
@@ -14,6 +27,16 @@ impl ContextPacker {
         Self {
             max_chars,
             ranker: TextRank::default(),
+            strategy: PackingStrategy::default(),
+        }
+    }
+
+    /// Create a ContextPacker with a specific packing strategy.
+    pub fn with_strategy(max_chars: usize, strategy: PackingStrategy) -> Self {
+        Self {
+            max_chars,
+            ranker: TextRank::default(),
+            strategy,
         }
     }
 
@@ -87,7 +110,53 @@ impl ContextPacker {
             }
         }
 
-        selected.join("\n")
+        // 5. Apply packing strategy (reorder for LLM attention patterns)
+        let ordered = self.apply_strategy(selected);
+
+        ordered.join("\n")
+    }
+
+    /// Reorders selected content based on the packing strategy.
+    /// 
+    /// For U-Shaped: Places important content at start and end where LLMs attend most.
+    /// Input is ranked by importance: [1st, 2nd, 3rd, 4th, 5th]
+    /// Output is U-shaped: [1st, 3rd, 5th, 4th, 2nd]
+    /// 
+    /// This ensures #1 is at position 0 (start) and #2 is at position -1 (end),
+    /// based on "Lost in the Middle" (Liu et al., 2023).
+    fn apply_strategy(&self, selected: Vec<String>) -> Vec<String> {
+        match self.strategy {
+            PackingStrategy::Ranked => selected,
+            PackingStrategy::UShaped => {
+                if selected.len() <= 2 {
+                    return selected;
+                }
+                
+                let n = selected.len();
+                let mut result = vec![String::new(); n];
+                
+                let mut front_idx = 0;
+                let mut back_idx = n - 1;
+                
+                // Interleave: odd-ranked (1st, 3rd, 5th...) go to front
+                //             even-ranked (2nd, 4th, 6th...) go to back
+                for (i, item) in selected.into_iter().enumerate() {
+                    if i % 2 == 0 {
+                        // Odd ranks (0, 2, 4... in 0-indexed) go to front
+                        result[front_idx] = item;
+                        front_idx += 1;
+                    } else {
+                        // Even ranks (1, 3, 5... in 0-indexed) go to back
+                        result[back_idx] = item;
+                        if back_idx > 0 {
+                            back_idx -= 1;
+                        }
+                    }
+                }
+                
+                result
+            }
+        }
     }
 
     /// Packs multiple batches of documents in parallel using Rayon.

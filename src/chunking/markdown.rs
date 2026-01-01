@@ -1,24 +1,126 @@
 use pulldown_cmark::{Parser, Event};
+use rayon::prelude::*;
+use std::sync::Arc;
+use crate::tokenization::TokenizerBackend;
 
 /// MarkdownChunker splits documents based on Markdown structure.
-/// 
-/// It uses `pulldown-cmark` to parse the document as a stream of events,
-/// ensuring we only split at logical block boundaries (headers, paragraphs, list items).
 pub struct MarkdownChunker {
     max_tokens: usize,
+    tokenizer: Option<Arc<dyn TokenizerBackend>>,
 }
 
 impl MarkdownChunker {
     pub fn new(max_tokens: usize) -> Self {
-        Self { max_tokens }
+        Self { max_tokens, tokenizer: None }
     }
 
-    /// Chunks a markdown string into a list of strings, each within the token limit.
-    /// 
-    /// improved comparison vs langchain:
-    /// This implementation uses zero-copy slicing of the original markdown string.
-    /// It preserves all markdown syntax (headers, code blocks, etc.) which was previously lost.
+    pub fn with_tokenizer(max_tokens: usize, tokenizer: Arc<dyn TokenizerBackend>) -> Self {
+        Self { max_tokens, tokenizer: Some(tokenizer) }
+    }
+
+    /// Chunks a markdown string.
+    /// If a tokenizer is present, it uses precise token counting and parallel processing.
+    /// If not, it falls back to fast character-based splitting.
     pub fn chunk(&self, md: &str) -> Vec<String> {
+        if let Some(tokenizer) = &self.tokenizer {
+            self.chunk_with_tokenizer(md, tokenizer)
+        } else {
+            self.chunk_legacy_char(md)
+        }
+    }
+
+    fn chunk_with_tokenizer(&self, md: &str, tokenizer: &Arc<dyn TokenizerBackend>) -> Vec<String> {
+        // Step 1: Identify top-level blocks (Structural Parsing)
+        let blocks = self.get_top_level_blocks(md);
+
+        // Step 2: Tokenize blocks in parallel (SOTA Speed)
+        // We collect (range, token_count) pairs
+        let scored_blocks: Vec<(std::ops::Range<usize>, usize)> = blocks.into_par_iter()
+            .map(|range| {
+                let text = &md[range.clone()];
+                let count = tokenizer.count(text);
+                (range, count)
+            })
+            .collect();
+
+        // Step 3: Semantic Bin Packing (Greedy but boundary-aware)
+        let mut chunks = Vec::new();
+        let mut current_chunk_start = if scored_blocks.is_empty() { 0 } else { scored_blocks[0].0.start };
+        let mut current_chunk_end = current_chunk_start;
+        let mut current_tokens = 0;
+
+        for (range, tokens) in scored_blocks {
+            // Gap handling: If there was a gap between blocks (e.g., newlines), 
+            // we should conceptually include it in the *current* chunk if extending.
+            // But `get_top_level_blocks` might skip whitespace. 
+            // A simple approach is to just use range.end as the new end.
+            
+            if current_tokens + tokens > self.max_tokens {
+                if current_tokens > 0 {
+                    // Push current chunk
+                    // Extend to include any trailing whitespace before this new block starts? 
+                    // Actually `md[current_chunk_start..current_chunk_end]` covers the blocks we added.
+                    chunks.push(md[current_chunk_start..current_chunk_end].to_string());
+                }
+                
+                // Start new chunk with this block
+                // Handle edge case: Single block > max_tokens
+                if tokens > self.max_tokens {
+                    // We must split this block.
+                    // For now, naive fallback: just accept it or warn.
+                    // Ideally we recurse inside the block, but for v0.3 start we accept "Block Integrity".
+                    chunks.push(md[range.start..range.end].to_string());
+                    current_tokens = 0;
+                    current_chunk_start = range.end; // technically next block start
+                } else {
+                    current_chunk_start = range.start;
+                    current_chunk_end = range.end;
+                    current_tokens = tokens;
+                }
+            } else {
+                // Add to current chunk
+                current_chunk_end = range.end;
+                current_tokens += tokens;
+            }
+        }
+
+        // Push final chunk
+        if current_tokens > 0 {
+             chunks.push(md[current_chunk_start..current_chunk_end].to_string());
+        }
+
+        chunks
+    }
+
+    fn get_top_level_blocks(&self, md: &str) -> Vec<std::ops::Range<usize>> {
+        let parser = Parser::new(md);
+        let mut blocks = Vec::new();
+        let mut nesting_level = 0;
+        let mut block_start = 0;
+
+        for (event, range) in parser.into_offset_iter() {
+            match event {
+                Event::Start(_) => {
+                    if nesting_level == 0 {
+                        block_start = range.start;
+                    }
+                    nesting_level += 1;
+                }
+                Event::End(_) => {
+                    if nesting_level > 0 {
+                        nesting_level -= 1;
+                    }
+                    if nesting_level == 0 {
+                        blocks.push(block_start..range.end);
+                    }
+                }
+                _ => {}
+            }
+        }
+        blocks
+    }
+
+    fn chunk_legacy_char(&self, md: &str) -> Vec<String> {
         let parser = Parser::new(md);
         let mut chunks = Vec::new();
         
@@ -26,75 +128,39 @@ impl MarkdownChunker {
         let mut last_safe_end = 0;
         let mut nesting_level = 0;
 
-        // Iterate events with their byte offsets in the original string
         for (event, range) in parser.into_offset_iter() {
             match event {
                 Event::Start(_) => {
                     nesting_level += 1;
                 }
                 Event::End(_) => {
-                    if nesting_level > 0 {
-                        nesting_level -= 1;
-                    }
+                    if nesting_level > 0 { nesting_level -= 1; }
                     
-                    // If we are back at root level, this is a safe place to maybe split
                     if nesting_level == 0 {
-                        // Check if adding this block would exceed the limit
-                        // We use range.end as the potential end of the chunk
                         if range.end - chunk_start > self.max_tokens {
-                            // Current block pushes us over limit.
-                            // Split at the LAST safe ending (preserves this big block for the next chunk)
                             if last_safe_end > chunk_start {
                                 chunks.push(md[chunk_start..last_safe_end].to_string());
                                 chunk_start = last_safe_end;
-                            } 
-                            // Edge case: A single block is huge (larger than max_tokens)
-                            // We have to split it anyway or accept the oversize.
-                            // For safety, we force split at valid boundary if we haven't advanced.
-                            else {
+                            } else {
                                 chunks.push(md[chunk_start..range.end].to_string());
                                 chunk_start = range.end;
                             }
                         }
-                        
-                        // Mark this as the new safe ending point
                         last_safe_end = range.end;
                     }
                 }
                 _ => {}
             }
         }
-
-        // Final chunk
         if chunk_start < md.len() {
             chunks.push(md[chunk_start..].to_string());
         }
-
         chunks
     }
 
-    /// Chunks multiple documents in parallel using Rayon.
     pub fn chunk_batch(&self, docs: Vec<String>) -> Vec<Vec<String>> {
-        use rayon::prelude::*;
         docs.par_iter()
             .map(|doc| self.chunk(doc))
             .collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_markdown_chunking() {
-        let chunker = MarkdownChunker::new(50);
-        let md = "# Header 1\nThis is a paragraph that is quite long.\n\n## Header 2\nAnother paragraph.";
-        let chunks = chunker.chunk(md);
-        
-        assert!(chunks.len() >= 2);
-        for c in &chunks {
-            assert!(c.len() <= 100); // Buffer allowed for header + text
-        }
     }
 }

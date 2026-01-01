@@ -22,11 +22,15 @@ dist/
 # Benchmarking & Performance Tests (Local only)
 bench.py
 benchmark_suite.py
+benchmark_density.py
 bench_segmentation.py
+test_ushaped.py
+debug_ushaped.py
 benches/
 results/
 *.db
 *.pyd
+*.json
 
 # Documentation (Ignore all except core docs)
 *.md

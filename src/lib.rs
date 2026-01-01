@@ -2,6 +2,7 @@ use pyo3::prelude::*;
 
 pub mod cache;
 pub mod chunking;
+pub mod tokenization;
 pub mod packing;
 
 /// Core module for ferrous Rust implementations.
