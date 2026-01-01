@@ -33,11 +33,11 @@ impl PyContextPacker {
     /// Returns:
     ///     str: The packed and ranked context.
     pub fn pack(&self, py: Python<'_>, documents: Vec<String>) -> String {
-        py.allow_threads(|| self.inner.pack(&documents))
+        py.detach(|| self.inner.pack(&documents))
     }
 
     /// Packs multiple batches of documents in parallel.
     pub fn pack_batch(&self, py: Python<'_>, document_sets: Vec<Vec<String>>) -> Vec<String> {
-        py.allow_threads(|| self.inner.pack_batch(document_sets))
+        py.detach(|| self.inner.pack_batch(document_sets))
     }
 }
