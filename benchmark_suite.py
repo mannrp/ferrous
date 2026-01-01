@@ -638,43 +638,71 @@ class QualityBenchmarks:
 class NeedleBenchmarks:
     """Needle in a Haystack - Recall Benchmark"""
     
+    def __init__(self, scale_config: dict = None):
+        # Default to 2000 if not specified (legacy behavior)
+        if scale_config and "docs" in scale_config:
+            # Scale sentence count based on doc count/size loosely
+            # small=10 -> 2,000
+            # medium=50 -> 5,000
+            # large=200 -> 20,000
+            # stress=500 -> 100,000
+            base = 2000
+            multiplier = 1
+            if scale_config["docs"] >= 50: multiplier = 2.5
+            if scale_config["docs"] >= 200: multiplier = 10
+            if scale_config["docs"] >= 500: multiplier = 50
+            
+            self.num_sentences = int(base * multiplier)
+        else:
+            self.num_sentences = 2000
+            
     def run(self) -> List[BenchmarkResult]:
         results = []
-        print("\n  Needle benchmark: Recall of specific facts at depth")
+        print(f"\n  Needle benchmark: Recall in {self.num_sentences:,} sentences...")
         
         try:
             from ferrous import ContextPacker
             
-            # Setup: Create a long document (2000 sentences)
-            # 2000 sentences is well above the 300 cap.
-            # Truncation would fail at index > 300.
-            # TF-IDF should rescue them if they are distinct.
-            
             filler = "The quick brown fox jumps over the lazy dog. "
-            sentences = [filler for _ in range(2000)]
+            sentences = [filler for _ in range(self.num_sentences)]
             
-            # Insert Needles
-            needles = [
-                (0, "The secret code is ALPHA."),      # Start (always kept)
-                (290, "The secret code is BRAVO."),    # Near truncation boundary
-                (310, "The secret code is CHARLIE."),  # Just past 300 cap
-                (1000, "The secret code is DELTA."),   # Middle
-                (1999, "The secret code is ECHO."),    # End
+            # Insert Needles at widely distributed points
+            count = self.num_sentences
+            indices = [
+                0,                          # Start
+                min(290, count-1),          # Boundary
+                min(310, count-1),          # Boundary+
+                count // 2,                 # Middle
+                count - 1                   # End
             ]
+            indices = sorted(list(set(indices))) # Dedupe
             
-            for idx, text in needles:
+            needles = []
+            codes = ["ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO"]
+            
+            for i, idx in enumerate(indices):
+                code = codes[i % len(codes)]
+                text = f"The secret code is {code} at {idx}."
+                needles.append((idx, text))
                 sentences[idx] = text
                 
             doc = " ".join(sentences)
             
             # Pack
-            packer = ContextPacker(max_tokens=6000) # Give enough budget
+            # Budget must be enough to capture them IF they are ranked high.
+            # But we want to test if they are SELECTED. 
+            # With TF-IDF, the limit is MAX_SENTENCES (300).
+            # So if we have 100,000 sentences, and we only select 300, 
+            # we need to be sure the 5 needles are in that top 300.
+            # That's the real test.
+            
+            packer = ContextPacker(max_tokens=10000) 
             packed = packer.pack([doc])
             
             found_count = 0
             for _, needle in needles:
                 if needle in packed:
-                    print(f"    FOUND: {needle}")
+                    # print(f"    FOUND: {needle}")
                     found_count += 1
                 else:
                     print(f"    MISS:  {needle}")
@@ -689,7 +717,7 @@ class NeedleBenchmarks:
                 metric="recall",
                 value=recall,
                 unit="ratio",
-                scale="2000_sentences",
+                scale=f"{self.num_sentences}_sentences",
                 iterations=1,
                 std_dev=0,
                 min_val=recall,
@@ -795,7 +823,7 @@ def run_all_benchmarks(scale: str = "medium", components: Optional[List[str]] = 
         ("cache", CacheBenchmarks(scale_config)),
         ("packing", PackingBenchmarks(scale_config)),
         ("quality", QualityBenchmarks()),
-        ("needle", NeedleBenchmarks()),
+        ("needle", NeedleBenchmarks(scale_config)),
     ]
     
     for name, bench in benchmarks:
