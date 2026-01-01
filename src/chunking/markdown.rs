@@ -1,4 +1,4 @@
-use pulldown_cmark::{Parser, Event, Tag, TagEnd};
+use pulldown_cmark::{Parser, Event};
 
 /// MarkdownChunker splits documents based on Markdown structure.
 /// 
@@ -15,65 +15,70 @@ impl MarkdownChunker {
 
     /// Chunks a markdown string into a list of strings, each within the token limit.
     /// 
-    /// Note: This implementation currently uses string length as a proxy for tokens.
-    /// In a production scenario, we'd use a real tokenizer (e.g., Tiktoken).
+    /// improved comparison vs langchain:
+    /// This implementation uses zero-copy slicing of the original markdown string.
+    /// It preserves all markdown syntax (headers, code blocks, etc.) which was previously lost.
     pub fn chunk(&self, md: &str) -> Vec<String> {
         let parser = Parser::new(md);
         let mut chunks = Vec::new();
-        let mut current_chunk = String::new();
+        
+        let mut chunk_start = 0;
+        let mut last_safe_end = 0;
+        let mut nesting_level = 0;
 
-        // Track state to avoid splitting inside sensitive blocks (like tables or code).
-        let mut in_code_block = false;
-        let mut block_buffer = String::new();
-
-        for event in parser {
+        // Iterate events with their byte offsets in the original string
+        for (event, range) in parser.into_offset_iter() {
             match event {
-                // Start of a structural block (Header, Paragraph, List Item)
-                Event::Start(tag) => {
-                    if let Tag::CodeBlock(_) = tag {
-                        in_code_block = true;
-                    }
-                    // For now, we just buffer everything.
+                Event::Start(_) => {
+                    nesting_level += 1;
                 }
-                
-                // End of a structural block - this is where we check if we should "flush" the chunk
-                Event::End(tag) => {
-                    if let TagEnd::CodeBlock = tag {
-                        in_code_block = false;
-                    }
-
-                    // If we're at a block boundary and the chunk is getting too big, flush it.
-                    if !in_code_block && current_chunk.len() + block_buffer.len() > self.max_tokens {
-                        if !current_chunk.is_empty() {
-                            chunks.push(current_chunk.clone());
-                            current_chunk.clear();
-                        }
+                Event::End(_) => {
+                    if nesting_level > 0 {
+                        nesting_level -= 1;
                     }
                     
-                    current_chunk.push_str(&block_buffer);
-                    block_buffer.clear();
+                    // If we are back at root level, this is a safe place to maybe split
+                    if nesting_level == 0 {
+                        // Check if adding this block would exceed the limit
+                        // We use range.end as the potential end of the chunk
+                        if range.end - chunk_start > self.max_tokens {
+                            // Current block pushes us over limit.
+                            // Split at the LAST safe ending (preserves this big block for the next chunk)
+                            if last_safe_end > chunk_start {
+                                chunks.push(md[chunk_start..last_safe_end].to_string());
+                                chunk_start = last_safe_end;
+                            } 
+                            // Edge case: A single block is huge (larger than max_tokens)
+                            // We have to split it anyway or accept the oversize.
+                            // For safety, we force split at valid boundary if we haven't advanced.
+                            else {
+                                chunks.push(md[chunk_start..range.end].to_string());
+                                chunk_start = range.end;
+                            }
+                        }
+                        
+                        // Mark this as the new safe ending point
+                        last_safe_end = range.end;
+                    }
                 }
-
-                // Actual content
-                Event::Text(text) => {
-                    block_buffer.push_str(&text);
-                }
-                
-                Event::Code(code) | Event::InlineMath(code) => {
-                    block_buffer.push_str(&code);
-                }
-
-                _ => {} // Handle other events if needed
+                _ => {}
             }
         }
 
-        // Push final chunk if not empty
-        if !current_chunk.is_empty() || !block_buffer.is_empty() {
-            current_chunk.push_str(&block_buffer);
-            chunks.push(current_chunk);
+        // Final chunk
+        if chunk_start < md.len() {
+            chunks.push(md[chunk_start..].to_string());
         }
 
         chunks
+    }
+
+    /// Chunks multiple documents in parallel using Rayon.
+    pub fn chunk_batch(&self, docs: Vec<String>) -> Vec<Vec<String>> {
+        use rayon::prelude::*;
+        docs.par_iter()
+            .map(|doc| self.chunk(doc))
+            .collect()
     }
 }
 

@@ -24,7 +24,14 @@ impl PyMarkdownChunker {
     /// 
     /// Returns:
     ///     list[str]: A list of chunks.
-    pub fn chunk(&self, md: &str) -> Vec<String> {
-        self.inner.chunk(md)
+    /// Returns:
+    ///     list[str]: A list of chunks.
+    pub fn chunk(&self, py: Python<'_>, md: String) -> Vec<String> {
+        py.detach(|| self.inner.chunk(&md))
+    }
+
+    /// Chunks multiple documents in parallel.
+    pub fn chunk_batch(&self, py: Python<'_>, docs: Vec<String>) -> Vec<Vec<String>> {
+        py.detach(|| self.inner.chunk_batch(docs))
     }
 }

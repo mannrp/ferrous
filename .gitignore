@@ -36,3 +36,14 @@ bench_cache.db
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Benchmarking results
+benchmark_results.json
+
+# Compiled Python Extensions
+*.pyd
+
+# Documentation
+*.md
+!README.md
+!LICENSE.md
