@@ -29,9 +29,14 @@ pulldown-cmark = "0.11"
 # Hashing for fuzzy cache
 murmurhash3 = "0.0.5"
 
+# Unicode-compliant text segmentation (UAX #29)
+unicode-segmentation = "1.12"
+
 [dev-dependencies]
 # For benchmarking
 criterion = "0.5"
+# For temporary file tests
+tempfile = "3.19"
 
 [[bench]]
 name = "cache_bench"
