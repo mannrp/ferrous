@@ -36,9 +36,6 @@ rustc-hash = "2.1.1"
 [dev-dependencies]
 # For benchmarking
 criterion = "0.5"
+
 # For temporary file tests
 tempfile = "3.19"
-
-[[bench]]
-name = "cache_bench"
-harness = false
