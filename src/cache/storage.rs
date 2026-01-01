@@ -151,40 +151,101 @@ impl SQLiteStorage {
         Ok(())
     }
 
-    /// Performs single-pass fuzzy search for multiple fingerprints.
-    /// O(N) over the database, but amortized over M queries.
+    /// Performs fuzzy search for multiple fingerprints using Deferred Loading.
+    /// 
+    /// Optimization: We scan only (rowid, fingerprint) first (integers are cheap),
+    /// then fetch the heavy `data` string only for matches. This avoids reading
+    /// 50k strings when we typically only need ~1-5.
+    /// 
+    /// Complexity: O(N) for scan + O(M) for fetch where M = number of matches.
     pub fn find_nearby_batch(&self, queries: &[u64], threshold: u32) -> Vec<Option<String>> {
         let mut results = vec![None; queries.len()];
-        let mut found_count = 0;
         
-        let mut stmt = match self.conn.prepare("SELECT fingerprint, data FROM fuzzy_cache") {
+        if queries.is_empty() {
+            return results;
+        }
+
+        // Phase 1: FAST SCAN - Only read rowid and fingerprint (integers)
+        let mut stmt = match self.conn.prepare("SELECT rowid, fingerprint FROM fuzzy_cache") {
             Ok(s) => s,
             Err(_) => return results,
         };
 
+        // Track which queries found matches: query_index -> (rowid, distance)
+        let mut matches: FxHashMap<usize, (i64, u32)> = FxHashMap::default();
+        matches.reserve(queries.len());
+
         let rows = match stmt.query_map([], |row| {
-            let f: i64 = row.get(0)?;
-            let d: String = row.get(1)?;
-            Ok((f as u64, d))
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
         }) {
             Ok(r) => r,
             Err(_) => return results,
         };
 
+        // Phase 2: Distance calculation in Rust (CPU-bound on u64s, very fast)
         for row in rows {
-            if let Ok((f, d)) = row {
-                for (i, &q) in queries.iter().enumerate() {
-                    if results[i].is_none() {
-                        let dist = (f ^ q).count_ones();
-                        if dist <= threshold {
-                            results[i] = Some(d.clone());
-                            found_count += 1;
-                        }
+            if let Ok((rowid, fp_i64)) = row {
+                let fp = fp_i64 as u64;
+
+                for (i, &target_fp) in queries.iter().enumerate() {
+                    // Skip if we already found a match for this query
+                    if matches.contains_key(&i) {
+                        continue;
+                    }
+
+                    let dist = (fp ^ target_fp).count_ones();
+                    if dist <= threshold {
+                        matches.insert(i, (rowid, dist));
                     }
                 }
             }
-            if found_count == queries.len() {
+
+            // Early exit if all queries found matches
+            if matches.len() == queries.len() {
                 break;
+            }
+        }
+
+        if matches.is_empty() {
+            return results;
+        }
+
+        // Phase 3: SLOW FETCH - Get data only for winning rowids
+        let rowids: Vec<i64> = matches.values().map(|(rowid, _)| *rowid).collect();
+        let placeholders: Vec<&str> = vec!["?"; rowids.len()];
+        let query = format!(
+            "SELECT rowid, data FROM fuzzy_cache WHERE rowid IN ({})",
+            placeholders.join(",")
+        );
+
+        let mut stmt_data = match self.conn.prepare(&query) {
+            Ok(s) => s,
+            Err(_) => return results,
+        };
+
+        let params: Vec<&dyn rusqlite::ToSql> = rowids.iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
+
+        let data_rows = match stmt_data.query_map(&*params, |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        }) {
+            Ok(r) => r,
+            Err(_) => return results,
+        };
+
+        // Build rowid -> data map
+        let mut data_map: FxHashMap<i64, String> = FxHashMap::default();
+        for row in data_rows {
+            if let Ok((rowid, data)) = row {
+                data_map.insert(rowid, data);
+            }
+        }
+
+        // Populate results
+        for (query_idx, (rowid, _)) in matches {
+            if let Some(data) = data_map.remove(&rowid) {
+                results[query_idx] = Some(data);
             }
         }
 
