@@ -94,28 +94,30 @@ impl SQLiteStorage {
             return Ok(vec![]);
         }
 
-        // 1. Build query dynamically: "SELECT fingerprint, data FROM ... WHERE fingerprint IN (?,?,?)"
-        // Note: SQLite limits the number of variables (usually 999 or 32766). 
-        // We should chunk this if it exceeds limits, but for v0.2 we assume sensible batch sizes (<900).
-        let placeholders: Vec<&str> = vec!["?"; fingerprints.len()];
+        // 1. Deduplicate fingerprints to minimize SQL 'IN' clause size
+        let mut unique_fps: Vec<u64> = fingerprints.iter().cloned().collect();
+        unique_fps.sort_unstable();
+        unique_fps.dedup();
+
+        // 2. Build query dynamically: "SELECT fingerprint, data FROM ... WHERE fingerprint IN (?,?,?) GROUP BY fingerprint"
+        let placeholders: Vec<&str> = vec!["?"; unique_fps.len()];
         let query = format!(
-            "SELECT fingerprint, data FROM fuzzy_cache WHERE fingerprint IN ({})",
+            "SELECT fingerprint, data FROM fuzzy_cache WHERE fingerprint IN ({}) GROUP BY fingerprint",
             placeholders.join(",")
         );
 
         let mut stmt = self.conn.prepare(&query)?;
         
-        // 2. Map params - cast to i64 to match SQLite storage format
-        let fingerprints_i64: Vec<i64> = fingerprints.iter().map(|f| *f as i64).collect();
+        // 3. Map params - cast to i64 to match SQLite storage format
+        let fingerprints_i64: Vec<i64> = unique_fps.iter().map(|f| *f as i64).collect();
         let params: Vec<&dyn rusqlite::ToSql> = fingerprints_i64.iter()
             .map(|f| f as &dyn rusqlite::ToSql)
             .collect();
 
-        // 3. Execute and build map (FxHashMap is faster for integer keys)
+        // 4. Execute and build map (FxHashMap is faster for integer keys)
         let mut found_map: FxHashMap<u64, String> = FxHashMap::default();
-        found_map.reserve(fingerprints.len());
+        found_map.reserve(unique_fps.len());
         
-        // Use query_map to iterate rows
         let rows = stmt.query_map(&*params, |row| {
              let f: i64 = row.get(0)?;
              let d: String = row.get(1)?;
@@ -127,8 +129,8 @@ impl SQLiteStorage {
             found_map.insert(f as u64, d);
         }
 
-        // 4. Return results in order
-        let results = fingerprints.iter()
+        // 5. Return results in original order using the map
+        let results: Vec<Option<String>> = fingerprints.iter()
             .map(|fp| found_map.get(fp).cloned()) 
             .collect();
 
