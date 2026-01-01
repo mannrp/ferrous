@@ -17,11 +17,16 @@ impl SQLiteStorage {
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         
         // Initialize the table if it doesn't exist.
-        // We index the fingerprint for fast O(log N) lookups.
+        // Band columns enable Pigeonhole fuzzy lookup: if Hamming dist <= 3,
+        // at least one 16-bit band must match exactly.
         conn.execute(
             "CREATE TABLE IF NOT EXISTS fuzzy_cache (
                 id INTEGER PRIMARY KEY,
                 fingerprint INTEGER NOT NULL,
+                band_a INTEGER NOT NULL DEFAULT 0,
+                band_b INTEGER NOT NULL DEFAULT 0,
+                band_c INTEGER NOT NULL DEFAULT 0,
+                band_d INTEGER NOT NULL DEFAULT 0,
                 input_text TEXT NOT NULL,
                 data TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -29,19 +34,39 @@ impl SQLiteStorage {
             [],
         )?;
 
+        // Primary fingerprint index for exact lookups
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_fingerprint ON fuzzy_cache (fingerprint)",
             [],
         )?;
+        
+        // Pigeonhole band indexes for fuzzy lookups
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_band_a ON fuzzy_cache (band_a)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_band_b ON fuzzy_cache (band_b)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_band_c ON fuzzy_cache (band_c)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_band_d ON fuzzy_cache (band_d)", [])?;
 
         Ok(Self { conn })
     }
+    
+    /// Splits a 64-bit fingerprint into 4 x 16-bit bands for Pigeonhole indexing.
+    #[inline]
+    fn split_bands(fp: u64) -> (i64, i64, i64, i64) {
+        (
+            ((fp >> 48) & 0xFFFF) as i64,
+            ((fp >> 32) & 0xFFFF) as i64,
+            ((fp >> 16) & 0xFFFF) as i64,
+            (fp & 0xFFFF) as i64,
+        )
+    }
 
-    /// Stores a result in the cache.
+    /// Stores a result in the cache with Pigeonhole band indexing.
     pub fn put(&self, fingerprint: u64, input_text: &str, data: &str) -> Result<()> {
+        let (a, b, c, d) = Self::split_bands(fingerprint);
         self.conn.execute(
-            "INSERT INTO fuzzy_cache (fingerprint, input_text, data) VALUES (?1, ?2, ?3)",
-            params![fingerprint as i64, input_text, data],
+            "INSERT INTO fuzzy_cache (fingerprint, band_a, band_b, band_c, band_d, input_text, data) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![fingerprint as i64, a, b, c, d, input_text, data],
         )?;
         Ok(())
     }
@@ -141,10 +166,12 @@ impl SQLiteStorage {
         let tx = self.conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
-                "INSERT INTO fuzzy_cache (fingerprint, input_text, data) VALUES (?1, ?2, ?3)"
+                "INSERT INTO fuzzy_cache (fingerprint, band_a, band_b, band_c, band_d, input_text, data) 
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)"
             )?;
             for (fp, text, data) in items {
-                stmt.execute(params![fp as i64, text, data])?;
+                let (a, b, c, d) = Self::split_bands(fp);
+                stmt.execute(params![fp as i64, a, b, c, d, text, data])?;
             }
         }
         tx.commit()?;
@@ -251,7 +278,61 @@ impl SQLiteStorage {
 
         results
     }
+    
+    /// Performs fuzzy search using Pigeonhole Principle for O(1) candidate lookup.
+    /// 
+    /// If two 64-bit hashes have Hamming distance <= 3, at least one of their
+    /// four 16-bit bands must match exactly. We use band indexes to find candidates
+    /// then verify with full Hamming distance check.
+    /// 
+    /// Complexity: O(K) where K = number of candidates (~10-50 typically) vs O(N) full scan.
+    pub fn find_nearby_pigeonhole(&self, fingerprint: u64, threshold: u32) -> Result<Option<String>> {
+        let (a, b, c, d) = Self::split_bands(fingerprint);
+        
+        // Query using OR on band indexes - SQLite will use index OR optimization
+        let mut stmt = self.conn.prepare(
+            "SELECT fingerprint, data FROM fuzzy_cache 
+             WHERE band_a = ?1 OR band_b = ?2 OR band_c = ?3 OR band_d = ?4"
+        )?;
+        
+        let rows = stmt.query_map(params![a, b, c, d], |row| {
+            let f: i64 = row.get(0)?;
+            let d: String = row.get(1)?;
+            Ok((f as u64, d))
+        })?;
+        
+        // Verify candidates with full Hamming distance check
+        for row in rows {
+            let (fp, data) = row?;
+            let dist = (fp ^ fingerprint).count_ones();
+            if dist <= threshold {
+                return Ok(Some(data));
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    /// Performs batch fuzzy search using Pigeonhole Principle.
+    /// 
+    /// For each query, we use band indexes to find candidates instead of full scan.
+    pub fn find_nearby_batch_pigeonhole(&self, queries: &[u64], threshold: u32) -> Vec<Option<String>> {
+        let mut results = vec![None; queries.len()];
+        
+        if queries.is_empty() {
+            return results;
+        }
+        
+        for (i, &fp) in queries.iter().enumerate() {
+            if let Ok(Some(data)) = self.find_nearby_pigeonhole(fp, threshold) {
+                results[i] = Some(data);
+            }
+        }
+        
+        results
+    }
 }
+
 
 #[cfg(test)]
 mod tests {

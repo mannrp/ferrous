@@ -79,9 +79,9 @@ impl FuzzyCache {
             }
         }
 
-        // 3. Perform batch fuzzy search on misses
+        // 3. Perform batch fuzzy search on misses using Pigeonhole indexes
         if !misses_fps.is_empty() {
-            let fuzzy_results = self.storage.find_nearby_batch(&misses_fps, self.threshold);
+            let fuzzy_results = self.storage.find_nearby_batch_pigeonhole(&misses_fps, self.threshold);
             for (i, res) in fuzzy_results.into_iter().enumerate() {
                 if res.is_some() {
                     results[misses_indices[i]] = res;
